@@ -6,20 +6,32 @@ import (
 )
 
 type Config struct {
-	ListenAddr  string
-	DatabaseURL string
-	APIToken    string
-	ControlURL  string
+	ListenAddr   string
+	DatabaseURL  string
+	APIToken     string
+	ControlURL   string
+	NodeName     string
+	NodeID       string
+	NodeToken    string
+	JoinToken    string
+	DockerSocket string
 }
 
 func Load() Config {
 	return Config{
-		ListenAddr:  value("BLACKARK_LISTEN_ADDR", ":8080"),
-		DatabaseURL: os.Getenv("BLACKARK_DATABASE_URL"),
-		APIToken:    os.Getenv("BLACKARK_API_TOKEN"),
-		ControlURL:  value("BLACKARK_CONTROL_URL", "http://localhost:8080"),
+		ListenAddr:   value("BLACKARK_LISTEN_ADDR", ":8080"),
+		DatabaseURL:  os.Getenv("BLACKARK_DATABASE_URL"),
+		APIToken:     os.Getenv("BLACKARK_API_TOKEN"),
+		ControlURL:   value("BLACKARK_CONTROL_URL", "http://localhost:8080"),
+		NodeName:     value("BLACKARK_NODE_NAME", hostname()),
+		NodeID:       os.Getenv("BLACKARK_NODE_ID"),
+		NodeToken:    os.Getenv("BLACKARK_NODE_TOKEN"),
+		JoinToken:    os.Getenv("BLACKARK_JOIN_TOKEN"),
+		DockerSocket: value("BLACKARK_DOCKER_SOCKET", "/var/run/docker.sock"),
 	}
 }
+
+func hostname() string { h, _ := os.Hostname(); return h }
 
 func (c Config) ValidateControl() error {
 	if c.DatabaseURL == "" {
