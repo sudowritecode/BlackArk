@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: blackark
+      POSTGRES_PASSWORD: blackark
+      POSTGRES_DB: blackark
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blackark"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports: ["${BLACKARK_POSTGRES_PORT:-5432}:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+  control:
+    build: .
+    environment:
+      BLACKARK_DATABASE_URL: postgres://blackark:blackark@postgres:5432/blackark?sslmode=disable
+      BLACKARK_API_TOKEN: ${BLACKARK_API_TOKEN:-local-development-token}
+      BLACKARK_LISTEN_ADDR: :8080
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["${BLACKARK_CONTROL_PORT:-8080}:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  postgres-data:
