@@ -26,5 +26,17 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  worker:
+    build: .
+    user: "0:0"
+    command: ["/usr/local/bin/blackark-agent"]
+    environment:
+      BLACKARK_CONTROL_URL: http://control:8080
+      BLACKARK_JOIN_TOKEN: ${BLACKARK_JOIN_TOKEN:-}
+      BLACKARK_NODE_NAME: ${BLACKARK_NODE_NAME:-worker-1}
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    depends_on:
+      control: {condition: service_healthy}
+    profiles: ["worker"]
 volumes:
   postgres-data:
