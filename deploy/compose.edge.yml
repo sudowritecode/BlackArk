@@ -1,0 +1,21 @@
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      BLACKARK_DOMAIN: ${BLACKARK_DOMAIN:?set BLACKARK_DOMAIN}
+      BLACKARK_UPSTREAM: ${BLACKARK_UPSTREAM:-control:8080}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+
