@@ -1,0 +1,17 @@
+# .slsa-goreleaser/linux-amd64.yml
+version: 1
+env:
+  - GO_VERSION=1.23
+  - GOOS=linux
+  - GOARCH=amd64
+  - CGO_ENABLED=0
+goos: linux
+goarch: amd64
+binary: blackark  # Your binary name
+flags:
+  - -trimpath
+  - -ldflags=-X main.version={{ .Env.VERSION }} -X main.commit={{ .Env.COMMIT }} -X main.commitDate={{ .Env.COMMIT_DATE }} -X main.treeState={{ .Env.TREE_STATE }}
+  - -mod=readonly
+  - -tags=netgo
+  - -v
+main: ./cmd/blackark  # Path to your main package
