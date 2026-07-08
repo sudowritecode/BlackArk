@@ -11,7 +11,6 @@ binary: blackark
 flags:
   - -trimpath
   - -ldflags=-X main.version={{ .Env.VERSION }} -X main.commit={{ .Env.COMMIT }} -X main.commitDate={{ .Env.COMMIT_DATE }} -X main.treeState={{ .Env.TREE_STATE }}
-  - -mod=readonly
   - -tags=netgo
   - -v
 main: ./cmd/blackark
