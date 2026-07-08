@@ -1,106 +1,36 @@
-name: BlackArk Go Release
+name: Release
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "v*.*.*"
+    tags: ['v*']
 
-permissions: read-all
+permissions:
+  contents: write
+  packages: write
 
 jobs:
-  check-main:
-    name: Ensure tag is from main
+  release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
-
-      - name: Check tag belongs to main
-        shell: bash
-        run: |
-          git fetch origin main --depth=1
-
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "This release tag is not on main. Refusing to build."
-            exit 1
-          fi
-
-          echo "Tag commit is on main. Continuing release."
-
-  args:
-    name: Build metadata
-    needs: check-main
-    runs-on: ubuntu-latest
-
-    outputs:
-      commit-date: ${{ steps.ldflags.outputs.commit-date }}
-      commit: ${{ steps.ldflags.outputs.commit }}
-      version: ${{ steps.ldflags.outputs.version }}
-      tree-state: ${{ steps.ldflags.outputs.tree-state }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+          go-version-file: go.mod
+      - name: Build versioned binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: make release
+      - uses: softprops/action-gh-release@v2
         with:
-          fetch-depth: 0
-
-      - name: Prepare ldflags
-        id: ldflags
-        shell: bash
-        run: |
-          VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
-          COMMIT_DATE="$(git log --date=iso8601-strict -1 --pretty=%ct)"
-          COMMIT="$GITHUB_SHA"
-
-          if git diff --quiet; then
-            TREE_STATE="clean"
-          else
-            TREE_STATE="dirty"
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "commit-date=$COMMIT_DATE" >> "$GITHUB_OUTPUT"
-          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
-          echo "tree-state=$TREE_STATE" >> "$GITHUB_OUTPUT"
-
-          echo "Version: $VERSION"
-          echo "Commit: $COMMIT"
-          echo "Commit date: $COMMIT_DATE"
-          echo "Tree state: $TREE_STATE"
-
-  build:
-    name: Build signed release binary
-    needs: args
-
-    permissions:
-      id-token: write
-      contents: write
-      actions: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            config: .slsa-goreleaser/linux-amd64.yml
-
-          - os: linux
-            arch: arm64
-            config: .slsa-goreleaser/linux-arm64.yml
-
-    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
-    with:
-      go-version: "1.23"
-      config-file: ${{ matrix.config }}
-      upload-assets: true
-      private-repository: true
-      evaluated-envs: >-
-        COMMIT_DATE:${{ needs.args.outputs.commit-date }},
-        COMMIT:${{ needs.args.outputs.commit }},
-        VERSION:${{ needs.args.outputs.version }},
-        TREE_STATE:${{ needs.args.outputs.tree-state }}
+          files: .artifacts/*
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push images
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ github.ref_name }}
+        run: docker buildx bake --push

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,10 +158,29 @@ func (a *agent) refresh(ctx context.Context) {
 			}
 		}
 		if logs, e := a.dockerReq(ctx, "GET", "/containers/"+*v.ContainerID+"/logs?stdout=1&stderr=1&tail=200", nil); e == nil {
-			v.Logs = string(logs)
+			v.Logs = decodeDockerLogs(logs)
 		}
 		a.instances[id] = v
 	}
+}
+
+// Docker frames stdout/stderr with an eight-byte header for non-TTY containers.
+// Persist only the text payload: the framing contains NUL bytes that PostgreSQL
+// text columns reject.
+func decodeDockerLogs(src []byte) string {
+	var out bytes.Buffer
+	for len(src) >= 8 && src[0] <= 2 {
+		size := int(binary.BigEndian.Uint32(src[4:8]))
+		if size > len(src)-8 {
+			return strings.ToValidUTF8(string(src), "�")
+		}
+		out.Write(src[8 : 8+size])
+		src = src[8+size:]
+	}
+	if out.Len() == 0 || len(src) != 0 {
+		return strings.ToValidUTF8(string(src), "�")
+	}
+	return strings.ToValidUTF8(out.String(), "�")
 }
 func values(m map[string]reported) []reported {
 	out := make([]reported, 0, len(m))

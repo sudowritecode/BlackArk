@@ -1,4 +1,9 @@
-.PHONY: build test migrate-up run-control
+.PHONY: build test release migrate-up run-control
+
+VERSION ?= dev
+GOOS ?= linux
+GOARCH ?= amd64
+BINS := blackark blackark-control blackark-agent
 
 build:
 	mkdir -p bin
@@ -8,6 +13,15 @@ build:
 
 test:
 	go test ./...
+
+release:
+	rm -rf .artifacts
+	mkdir -p .artifacts
+	for bin in $(BINS); do \
+		GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -trimpath -o ".artifacts/$$bin" "./cmd/$$bin"; \
+		tar -C .artifacts -czf ".artifacts/$$bin-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz" "$$bin"; \
+		rm ".artifacts/$$bin"; \
+	done
 
 migrate-up:
 	go run ./cmd/blackark-control migrate
