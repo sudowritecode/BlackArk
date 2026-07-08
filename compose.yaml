@@ -29,7 +29,7 @@ services:
   worker:
     build: .
     user: "0:0"
-    command: ["/usr/local/bin/blackark-agent"]
+    entrypoint: ["/usr/local/bin/blackark-agent"]
     environment:
       BLACKARK_CONTROL_URL: http://control:8080
       BLACKARK_JOIN_TOKEN: ${BLACKARK_JOIN_TOKEN:-}
