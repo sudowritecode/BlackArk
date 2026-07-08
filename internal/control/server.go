@@ -22,6 +22,9 @@ import (
 //go:embed webui
 var dashboardFS embed.FS
 
+// Version is the build version, set via ldflags at build time.
+var Version = "dev"
+
 type Server struct {
 	db               *pgxpool.Pool
 	token            string
@@ -404,7 +407,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	var d dashboardResponse
 	d.Cluster = clusterInfo{
 		URL:        r.Host,
-		Version:    "0.1.0",
+		Version:    Version,
 		UptimeSecs: int64(time.Since(s.startedAt).Seconds()),
 	}
 
