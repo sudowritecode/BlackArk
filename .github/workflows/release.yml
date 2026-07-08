@@ -23,10 +23,13 @@ jobs:
         shell: bash
         run: |
           git fetch origin main --depth=1
+
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "This release tag is not on main. Refusing to build."
             exit 1
           fi
+
+          echo "Tag commit is on main. Continuing release."
 
   args:
     name: Build metadata
@@ -49,10 +52,25 @@ jobs:
         id: ldflags
         shell: bash
         run: |
-          echo "commit-date=$(git log --date=iso8601-strict -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
-          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
-          echo "tree-state=$(if git diff --quiet; then echo clean; else echo dirty; fi)" >> "$GITHUB_OUTPUT"
+          VERSION="$(git describe --tags --always --dirty | sed 's/^v//')"
+          COMMIT_DATE="$(git log --date=iso8601-strict -1 --pretty=%ct)"
+          COMMIT="$GITHUB_SHA"
+
+          if git diff --quiet; then
+            TREE_STATE="clean"
+          else
+            TREE_STATE="dirty"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit-date=$COMMIT_DATE" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "tree-state=$TREE_STATE" >> "$GITHUB_OUTPUT"
+
+          echo "Version: $VERSION"
+          echo "Commit: $COMMIT"
+          echo "Commit date: $COMMIT_DATE"
+          echo "Tree state: $TREE_STATE"
 
   build:
     name: Build signed release binary
@@ -64,11 +82,13 @@ jobs:
       actions: read
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
             arch: amd64
             config: .slsa-goreleaser/linux-amd64.yml
+
           - os: linux
             arch: arm64
             config: .slsa-goreleaser/linux-arm64.yml
