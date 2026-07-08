@@ -1,38 +1,86 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
+name: BlackArk Go Release
 
-# This workflow lets you compile your Go project using a SLSA3 compliant builder.
-# This workflow will generate a so-called "provenance" file describing the steps
-# that were performed to generate the final binary.
-# The project is an initiative of the OpenSSF (openssf.org) and is developed at
-# https://github.com/slsa-framework/slsa-github-generator.
-# The provenance file can be verified using https://github.com/slsa-framework/slsa-verifier.
-# For more information about SLSA and how it improves the supply-chain, visit slsa.dev.
-
-name: SLSA Go releaser
 on:
   workflow_dispatch:
-  release:
-    types: [created]
+  push:
+    tags:
+      - "v*.*.*"
 
 permissions: read-all
 
 jobs:
-  # ========================================================================================================================================
-  #     Prerequesite: Create a .slsa-goreleaser.yml in the root directory of your project.
-  #       See format in https://github.com/slsa-framework/slsa-github-generator/blob/main/internal/builders/go/README.md#configuration-file
-  #=========================================================================================================================================
-  build:
-    permissions:
-      id-token: write # To sign.
-      contents: write # To upload release assets.
-      actions: read   # To read workflow path.
-    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v1.4.0
-    with:
-      go-version: 1.23
-      # =============================================================================================================
-      #     Optional: For more options, see https://github.com/slsa-framework/slsa-github-generator#golang-projects
-      # =============================================================================================================
+  check-main:
+    name: Ensure tag is from main
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check tag belongs to main
+        shell: bash
+        run: |
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "This release tag is not on main. Refusing to build."
+            exit 1
+          fi
+
+  args:
+    name: Build metadata
+    needs: check-main
+    runs-on: ubuntu-latest
+
+    outputs:
+      commit-date: ${{ steps.ldflags.outputs.commit-date }}
+      commit: ${{ steps.ldflags.outputs.commit }}
+      version: ${{ steps.ldflags.outputs.version }}
+      tree-state: ${{ steps.ldflags.outputs.tree-state }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Prepare ldflags
+        id: ldflags
+        shell: bash
+        run: |
+          echo "commit-date=$(git log --date=iso8601-strict -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          echo "tree-state=$(if git diff --quiet; then echo clean; else echo dirty; fi)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build signed release binary
+    needs: args
+
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            config: .slsa-goreleaser/linux-amd64.yml
+          - os: linux
+            arch: arm64
+            config: .slsa-goreleaser/linux-arm64.yml
+
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version: "1.23"
+      config-file: ${{ matrix.config }}
+      upload-assets: true
+      private-repository: true
+      evaluated-envs: >-
+        COMMIT_DATE:${{ needs.args.outputs.commit-date }},
+        COMMIT:${{ needs.args.outputs.commit }},
+        VERSION:${{ needs.args.outputs.version }},
+        TREE_STATE:${{ needs.args.outputs.tree-state }}
