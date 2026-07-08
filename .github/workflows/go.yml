@@ -1,0 +1,64 @@
+name: Scratch Go Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions: read-all
+
+jobs:
+  args:
+    name: Build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      commit-date: ${{ steps.ldflags.outputs.commit-date }}
+      commit: ${{ steps.ldflags.outputs.commit }}
+      version: ${{ steps.ldflags.outputs.version }}
+      tree-state: ${{ steps.ldflags.outputs.tree-state }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Prepare ldflags
+        id: ldflags
+        shell: bash
+        run: |
+          echo "commit-date=$(git log --date=iso8601-strict -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --always --dirty | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          echo "tree-state=$(if git diff --quiet; then echo clean; else echo dirty; fi)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build signed release binary
+    needs: args
+
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            config: .slsa-goreleaser/linux-amd64.yml
+          - os: linux
+            arch: arm64
+            config: .slsa-goreleaser/linux-arm64.yml
+
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version: "1.23"
+      config-file: ${{ matrix.config }}
+      upload-assets: true
+      evaluated-envs: >-
+        COMMIT_DATE:${{ needs.args.outputs.commit-date }},
+        COMMIT:${{ needs.args.outputs.commit }},
+        VERSION:${{ needs.args.outputs.version }},
+        TREE_STATE:${{ needs.args.outputs.tree-state }}
