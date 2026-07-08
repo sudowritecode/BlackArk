@@ -1,5 +1,6 @@
 .env
 bin/
+.artifacts/
 coverage.out
 *.log
 .DS_Store
