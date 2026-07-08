@@ -6,28 +6,30 @@ import (
 )
 
 type Config struct {
-	ListenAddr   string
-	DatabaseURL  string
-	APIToken     string
-	ControlURL   string
-	NodeName     string
-	NodeID       string
-	NodeToken    string
-	JoinToken    string
-	DockerSocket string
+	ListenAddr       string
+	DatabaseURL      string
+	APIToken         string
+	ControlURL       string
+	NodeName         string
+	NodeID           string
+	NodeToken        string
+	JoinToken        string
+	DockerSocket     string
+	DashboardEnabled bool
 }
 
 func Load() Config {
 	return Config{
-		ListenAddr:   value("BLACKARK_LISTEN_ADDR", ":8080"),
-		DatabaseURL:  os.Getenv("BLACKARK_DATABASE_URL"),
-		APIToken:     os.Getenv("BLACKARK_API_TOKEN"),
-		ControlURL:   value("BLACKARK_CONTROL_URL", "http://localhost:8080"),
-		NodeName:     value("BLACKARK_NODE_NAME", hostname()),
-		NodeID:       os.Getenv("BLACKARK_NODE_ID"),
-		NodeToken:    os.Getenv("BLACKARK_NODE_TOKEN"),
-		JoinToken:    os.Getenv("BLACKARK_JOIN_TOKEN"),
-		DockerSocket: value("BLACKARK_DOCKER_SOCKET", "/var/run/docker.sock"),
+		ListenAddr:       value("BLACKARK_LISTEN_ADDR", ":8080"),
+		DatabaseURL:      os.Getenv("BLACKARK_DATABASE_URL"),
+		APIToken:         os.Getenv("BLACKARK_API_TOKEN"),
+		ControlURL:       value("BLACKARK_CONTROL_URL", "http://localhost:8080"),
+		NodeName:         value("BLACKARK_NODE_NAME", hostname()),
+		NodeID:           os.Getenv("BLACKARK_NODE_ID"),
+		NodeToken:        os.Getenv("BLACKARK_NODE_TOKEN"),
+		JoinToken:        os.Getenv("BLACKARK_JOIN_TOKEN"),
+		DockerSocket:     value("BLACKARK_DOCKER_SOCKET", "/var/run/docker.sock"),
+		DashboardEnabled: os.Getenv("BLACKARK_DASHBOARD_ENABLED") == "true",
 	}
 }
 

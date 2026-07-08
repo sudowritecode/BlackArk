@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BlackArk Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;background:#0f1117;color:#e1e4e8;min-height:100vh;display:flex;flex-direction:column}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+header h1{font-size:20px;font-weight:600;color:#f0f6fc}
+header h1 span{color:#58a6ff}
+header .meta{display:flex;gap:16px;font-size:13px;color:#8b949e;flex-wrap:wrap}
+header .meta .label{color:#6e7681}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.status-dot.healthy{background:#3fb950}
+.status-dot.unhealthy{background:#f85149}
+.status-dot.pending{background:#d29922}
+.status-dot.running{background:#3fb950}
+.status-dot.stopped{background:#8b949e}
+.status-dot.failed{background:#f85149}
+.status-dot.degraded{background:#d29922}
+main{padding:24px;flex:1;max-width:1400px;margin:0 auto;width:100%}
+.error-banner{background:#3d1214;color:#ff7b72;padding:12px 16px;border-radius:6px;margin-bottom:16px;display:none;font-size:14px}
+.error-banner .dismiss{margin-left:12px;cursor:pointer;color:#ff7b72;background:none;border:none;font-size:16px}
+.loading{text-align:center;padding:48px;color:#8b949e;font-size:16px}
+.summary-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:24px}
+.summary-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
+.summary-card .count{font-size:28px;font-weight:700;line-height:1.2}
+.summary-card .count.healthy{color:#3fb950}
+.summary-card .count.unhealthy{color:#f85149}
+.summary-card .count.pending{color:#d29922}
+.summary-card .count.running{color:#3fb950}
+.summary-card .count.stopped{color:#8b949e}
+.summary-card .count.failed{color:#f85149}
+.summary-card .label{font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+.section-title{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:12px;margin-top:24px;display:flex;align-items:center;gap:8px}
+.section-title .count-badge{background:#30363d;color:#8b949e;font-size:12px;padding:2px 8px;border-radius:10px;font-weight:400}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin-bottom:8px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;transition:border-color .15s}
+.card:hover{border-color:#58a6ff}
+.card h3{font-size:15px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.card .row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid #21262d}
+.card .row:last-child{border-bottom:none}
+.card .row .key{color:#8b949e}
+.card .row .val{color:#e1e4e8;text-align:right}
+.card .bar-bg{background:#21262d;border-radius:4px;height:6px;margin-top:8px;overflow:hidden}
+.card .bar-fill{height:100%;border-radius:4px;transition:width .5s}
+.bar-fill.green{background:#3fb950}
+.bar-fill.yellow{background:#d29922}
+.bar-fill.red{background:#f85149}
+.empty{color:#8b949e;font-size:14px;padding:24px 0;text-align:center}
+.login-overlay{position:fixed;inset:0;background:rgba(15,17,23,.92);display:flex;align-items:center;justify-content:center;z-index:100}
+.login-box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;width:380px;max-width:90vw}
+.login-box h2{font-size:22px;margin-bottom:8px;color:#f0f6fc}
+.login-box p{color:#8b949e;font-size:14px;margin-bottom:20px}
+.login-box label{display:block;font-size:13px;color:#8b949e;margin-bottom:6px}
+.login-box input[type="password"]{width:100%;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;font-size:14px;margin-bottom:16px}
+.login-box input[type="password"]:focus{outline:none;border-color:#58a6ff}
+.login-box button{width:100%;padding:8px 16px;background:#238636;border:none;border-radius:6px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.login-box button:hover{background:#2ea043}
+.login-box .error{color:#f85149;font-size:13px;margin-top:8px;display:none}
+.login-box .hint{color:#6e7681;font-size:12px;margin-top:12px}
+.login-box .hint code{background:#0d1117;padding:2px 6px;border-radius:4px;font-size:11px}
+@media(max-width:640px){header{padding:12px 16px;flex-direction:column;align-items:flex-start}.summary-row{grid-template-columns:1fr 1fr}.card-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>⚫</span> BlackArk Dashboard</h1>
+  <div class="meta">
+    <span><span class="label">URL</span> <span id="cluster-url">—</span></span>
+    <span><span class="label">Version</span> <span id="cluster-version">—</span></span>
+    <span><span class="label">Uptime</span> <span id="cluster-uptime">—</span></span>
+    <span><span class="label">Refresh</span> <span id="refresh-status">off</span></span>
+  </div>
+</header>
+<main>
+  <div class="error-banner" id="error-banner">
+    <span id="error-text"></span>
+    <button class="dismiss" onclick="dismissError()">&times;</button>
+  </div>
+  <div id="loading" class="loading">Loading dashboard data...</div>
+  <div id="dashboard-content" style="display:none">
+    <div class="summary-row" id="summary-cards"></div>
+    <div class="section-title">Nodes <span class="count-badge" id="node-count">0</span></div>
+    <div class="card-grid" id="node-cards"></div>
+    <div class="section-title">Apps <span class="count-badge" id="app-count">0</span></div>
+    <div class="card-grid" id="app-cards"></div>
+  </div>
+</main>
+
+<script>
+const API = '/api/v1/dashboard';
+let refreshTimer = null;
+let refreshInterval = 10;
+
+function showError(msg) {
+  const banner = document.getElementById('error-banner');
+  document.getElementById('error-text').textContent = msg;
+  banner.style.display = 'block';
+}
+
+function dismissError() {
+  document.getElementById('error-banner').style.display = 'none';
+}
+
+function formatBytes(b) {
+  if (!b || b <= 0) return '0B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = b;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  if (i === 0) return b + 'B';
+  return v.toFixed(1) + units[i];
+}
+
+function fmtDuration(secs) {
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  const parts = [];
+  if (d > 0) parts.push(d + 'd');
+  if (h > 0) parts.push(h + 'h');
+  if (m > 0) parts.push(m + 'm');
+  parts.push(s + 's');
+  return parts.join(' ');
+}
+
+function fmtTime(t) {
+  if (!t) return '—';
+  return new Date(t).toLocaleString();
+}
+
+function updateCluster(d) {
+  document.getElementById('cluster-url').textContent = d.cluster.url || '—';
+  document.getElementById('cluster-version').textContent = d.cluster.version || '—';
+  document.getElementById('cluster-uptime').textContent = fmtDuration(d.cluster.uptime_seconds || 0);
+}
+
+function updateSummaryCards(d) {
+  const container = document.getElementById('summary-cards');
+  const cards = [
+    { count: d.nodes.healthy, label: 'Healthy Nodes', cls: 'healthy' },
+    { count: d.nodes.unhealthy, label: 'Unhealthy Nodes', cls: 'unhealthy' },
+    { count: d.nodes.pending, label: 'Pending Nodes', cls: 'pending' },
+    { count: d.apps.running, label: 'Running Apps', cls: 'running' },
+    { count: d.apps.stopped, label: 'Stopped Apps', cls: 'stopped' },
+    { count: d.apps.failed, label: 'Failed Apps', cls: 'failed' },
+  ];
+  container.innerHTML = cards.map(c =>
+    `<div class="summary-card"><div class="count ${c.cls}">${c.count}</div><div class="label">${c.label}</div></div>`
+  ).join('');
+}
+
+function updateNodeCards(d) {
+  document.getElementById('node-count').textContent = d.nodes.total || d.nodes.details.length;
+  const container = document.getElementById('node-cards');
+  if (!d.nodes.details || d.nodes.details.length === 0) {
+    container.innerHTML = '<div class="empty">No nodes registered</div>';
+    return;
+  }
+  container.innerHTML = d.nodes.details.map(n => {
+    const cpuPct = n.cpus > 0 ? Math.round((n.cpus_used / n.cpus) * 100) : 0;
+    const memPct = n.mem_bytes > 0 ? Math.round((n.mem_used_bytes / n.mem_bytes) * 100) : 0;
+    const barCls = cpuPct > 80 ? 'red' : cpuPct > 50 ? 'yellow' : 'green';
+    const memBarCls = memPct > 80 ? 'red' : memPct > 50 ? 'yellow' : 'green';
+    return `<div class="card">
+      <h3><span class="status-dot ${n.status}"></span>${n.name}</h3>
+      <div class="row"><span class="key">Status</span><span class="val">${n.status}</span></div>
+      <div class="row"><span class="key">CPU</span><span class="val">${n.cpus_used.toFixed(1)} / ${n.cpus.toFixed(1)} cores</span></div>
+      <div class="bar-bg"><div class="bar-fill ${barCls}" style="width:${cpuPct}%"></div></div>
+      <div class="row"><span class="key">Memory</span><span class="val">${formatBytes(n.mem_used_bytes)} / ${formatBytes(n.mem_bytes)}</span></div>
+      <div class="bar-bg"><div class="bar-fill ${memBarCls}" style="width:${memPct}%"></div></div>
+      <div class="row"><span class="key">Apps</span><span class="val">${n.app_count}</span></div>
+      <div class="row"><span class="key">Last Seen</span><span class="val">${fmtTime(n.last_seen_at)}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function updateAppCards(d) {
+  document.getElementById('app-count').textContent = d.apps.total || d.apps.details.length;
+  const container = document.getElementById('app-cards');
+  if (!d.apps.details || d.apps.details.length === 0) {
+    container.innerHTML = '<div class="empty">No applications deployed</div>';
+    return;
+  }
+  container.innerHTML = d.apps.details.map(a => {
+    const desired = a.desired_replicas || 0;
+    const ready = a.ready_replicas || 0;
+    const pct = desired > 0 ? Math.round((ready / desired) * 100) : 0;
+    const barCls = a.status === 'running' ? 'green' : a.status === 'degraded' ? 'yellow' : 'red';
+    return `<div class="card">
+      <h3><span class="status-dot ${a.status}"></span>${a.name}</h3>
+      <div class="row"><span class="key">Image</span><span class="val">${a.image}</span></div>
+      <div class="row"><span class="key">Status</span><span class="val">${a.status}</span></div>
+      <div class="row"><span class="key">Replicas</span><span class="val">${ready} / ${desired} ready</span></div>
+      <div class="bar-bg"><div class="bar-fill ${barCls}" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+}
+
+function updateDashboard(d) {
+  updateCluster(d);
+  updateSummaryCards(d);
+  updateNodeCards(d);
+  updateAppCards(d);
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('dashboard-content').style.display = 'block';
+  dismissError();
+}
+
+async function loadDashboard() {
+  try {
+    const res = await fetch(API);
+    if (!res.ok) {
+      if (res.status === 401) {
+        showError('Not authenticated. The dashboard API requires authentication. Ensure BLACKARK_DASHBOARD_ENABLED=true and the API is accessible.');
+      } else {
+        showError('Server returned ' + res.status + ' ' + res.statusText);
+      }
+      return;
+    }
+    const d = await res.json();
+    updateDashboard(d);
+  } catch (e) {
+    showError('Failed to fetch dashboard: ' + e.message);
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(loadDashboard, refreshInterval * 1000);
+  document.getElementById('refresh-status').textContent = refreshInterval + 's';
+}
+
+function init() {
+  loadDashboard();
+  startAutoRefresh();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

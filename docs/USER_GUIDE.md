@@ -1,112 +1,121 @@
 # BlackArk user guide
 
-This guide deploys a simple nginx container to an existing BlackArk cluster. BlackArk v1.0.3 is an API-first MVP, so the examples use `curl` and `jq`.
+This guide deploys a simple nginx container to an existing BlackArk cluster using the `blackark` CLI. No `curl` commands are needed for the normal operator workflow.
 
 ## What you need
 
 - A running BlackArk control plane and at least one healthy worker.
 - The control-plane URL, for example `https://blackark.example.com`.
 - The API token configured as `BLACKARK_API_TOKEN` on the control plane.
-- `curl` and `jq` on your computer.
+- The `blackark` binary (build with `make build` or download a release).
 - A container image that the workers can pull. Public images work without registry credentials.
 
-Set the client variables without putting the token in shell history:
+## Quick start
+
+Log in once to save your credentials:
 
 ```sh
-export BLACKARK_URL=https://blackark.example.com
-read -rsp 'BlackArk API token: ' BLACKARK_TOKEN; echo
-export BLACKARK_TOKEN
+blackark login --url https://blackark.example.com --token "$BLACKARK_API_TOKEN"
 ```
 
-Use this helper for the remaining examples:
-
-```sh
-blackark_api() {
-  method=$1
-  path=$2
-  data=${3:-}
-  curl --fail-with-body --silent --show-error \
-    -X "$method" \
-    -H "Authorization: Bearer $BLACKARK_TOKEN" \
-    -H 'Content-Type: application/json' \
-    ${data:+--data "$data"} \
-    "$BLACKARK_URL$path"
-}
-```
+Credentials are saved to `~/.config/blackark/config.yaml` (or `$BLACKARK_CONFIG`). Subsequent commands read the config file automatically.
 
 ## 1. Check the cluster
 
-The public health endpoint checks the control plane and database:
-
 ```sh
-curl --fail --silent "$BLACKARK_URL/healthz" | jq
-```
-
-Check that a worker is healthy:
-
-```sh
-blackark_api GET /v1/nodes | jq
+blackark health
+blackark status
+blackark get nodes
 ```
 
 Do not deploy until at least one node reports `"status": "healthy"`.
 
-## 2. Create and deploy nginx
+## 2. Deploy nginx with a manifest
 
-Create a two-replica app and save its ID:
+Create a file called `nginx.yaml`:
+
+```yaml
+apiVersion: blackark/v1
+kind: App
+metadata:
+  name: my-nginx
+spec:
+  image: nginx:1.27-alpine
+  replicas: 2
+```
+
+Apply it:
 
 ```sh
-APP_ID=$(
-  blackark_api POST /v1/apps \
-    '{"name":"my-nginx","image":"nginx:1.27-alpine","replicas":2}' \
-  | jq -r .id
-)
-printf 'app id: %s\n' "$APP_ID"
-
-blackark_api POST "/v1/apps/$APP_ID/deploy" '{}' | jq
+blackark apply -f nginx.yaml
 ```
 
 Workers poll every five seconds. Wait briefly, then inspect the app:
 
 ```sh
-blackark_api GET "/v1/apps/$APP_ID" | jq
+blackark describe app my-nginx
 ```
 
-The deployment is ready when both instances report `"status": "running"`. With two or more healthy workers, BlackArk spreads replicas across nodes when capacity permits.
+The deployment is ready when all instances report `"status": "running"`. With two or more healthy workers, BlackArk spreads replicas across nodes when capacity permits.
+
+You can also apply the manifest directly from a URL or generate it inline — the CLI accepts a local file path with `-f`.
 
 ## 3. Operate the app
 
 List all apps:
 
 ```sh
-blackark_api GET /v1/apps | jq
+blackark get apps
 ```
 
 Read the most recent combined container logs:
 
 ```sh
-blackark_api GET "/v1/apps/$APP_ID/logs?tail=100"
+blackark logs my-nginx
+blackark logs --tail 100 my-nginx
 ```
 
 Scale to three replicas:
 
 ```sh
-blackark_api PATCH "/v1/apps/$APP_ID" '{"replicas":3}' | jq
+blackark scale my-nginx 3
 ```
 
 Scale to zero while keeping the app record:
 
 ```sh
-blackark_api PATCH "/v1/apps/$APP_ID" '{"replicas":0}' | jq
+blackark scale my-nginx 0
+```
+
+Restart the app's containers:
+
+```sh
+blackark restart my-nginx
 ```
 
 Delete the app's deployed containers:
 
 ```sh
-blackark_api DELETE "/v1/apps/$APP_ID"
-unset APP_ID
+blackark delete app my-nginx
 ```
 
-A successful delete returns HTTP 204 with no response body. In v1.0.3, the app record remains for audit purposes with zero desired replicas.
+A successful delete prints `app deleted`. The app record remains for audit purposes with zero desired replicas.
+
+## 4. YAML App manifest reference
+
+The `blackark/v1` App manifest supports the following fields:
+
+```yaml
+apiVersion: blackark/v1      # required, must be "blackark/v1"
+kind: App                     # required, must be "App"
+metadata:
+  name: my-app               # required, unique among apps
+spec:
+  image: nginx:1.27-alpine   # required, any image workers can pull
+  replicas: 2                 # optional, default 1, non-negative integer
+```
+
+Unknown fields cause the manifest to be rejected with an actionable error. Use `KnownFields` validation — manifests with extra keys fail at apply time.
 
 ## Important MVP limitations
 
@@ -118,13 +127,15 @@ Workers access the local Docker socket. Treat worker hosts and the BlackArk API 
 
 ## Add a worker (administrator)
 
-Create a single-use join token on the control plane:
+Create a single-use join token on the control plane (requires the API token):
 
 ```sh
-JOIN_TOKEN=$(
-  blackark_api POST /v1/join-tokens '{"ttl_seconds":600}' \
-  | jq -r .token
-)
+# The API token is still needed for admin operations
+# Create a join token with timeout-limited validity:
+curl -s -X POST -H "Authorization: Bearer $BLACKARK_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"ttl_seconds":600}' \
+  "$BLACKARK_URL/v1/join-tokens"
 ```
 
 On the worker host, start an agent that can reach the control URL and local Docker socket:
@@ -140,9 +151,11 @@ On first join, the agent logs its node ID and credential. Store both in a secret
 
 ## Common failures
 
-- `401 unauthorized`: the client token does not match the control plane's `BLACKARK_API_TOKEN`.
+- `not logged in; run blackark login`: credentials are missing or the config file is not found. Run `blackark login --url <url> --token <token>`.
+- `invalid config`: the config file at `~/.config/blackark/config.yaml` has syntax errors. Delete it and re-run login.
+- `server returned 401 Unauthorized`: the API token does not match the control plane's `BLACKARK_API_TOKEN`. Re-login with the correct token.
 - No healthy nodes: start a worker agent, check its control-plane connectivity, and inspect its logs.
 - Image pull failure: verify the image name and that every eligible worker can pull it.
 - App stays pending: ensure workers remain healthy and wait for the next five-second heartbeat.
-- `409` when creating an app: app names are unique; choose another name.
-
+- `invalid manifest: apiVersion must be blackark/v1`: check the apiVersion field in your YAML file.
+- `invalid manifest: spec.image is required`: ensure the manifest has an image field under spec.

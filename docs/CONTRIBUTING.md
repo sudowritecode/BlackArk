@@ -21,4 +21,4 @@ Configure branch protection on `main` to require a pull request, one approval, a
 
 For edge HTTPS routing, copy `deploy/compose.edge.yml` and `deploy/Caddyfile` to the control host, set `ACME_EMAIL`, `BLACKARK_DOMAIN`, and optionally `BLACKARK_UPSTREAM`, then run `docker compose -f deploy/compose.edge.yml up -d`.
 
-The final runtime smoke test is `scripts/verify-mvp.sh`. It requires `curl`, `jq`, a control-plane token, two healthy registered workers, and a DNS name pointed at Caddy. Its endpoint contract is explicit in the script and should be updated alongside runtime API changes.
+The final runtime smoke test is `scripts/verify-mvp.sh`. It requires `curl`, `jq`, a control-plane token, two healthy workers on independent hosts, and a DNS name pointed at Caddy. Run it from a clean operator machine using the [operations runbook](OPERATIONS.md). Its endpoint contract is explicit in the script and should be updated alongside runtime API changes.

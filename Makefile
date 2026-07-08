@@ -1,4 +1,4 @@
-.PHONY: build test release migrate-up run-control
+.PHONY: build test release migrate-up run-control smoke-cli-test
 
 VERSION ?= dev
 GOOS ?= linux
@@ -28,3 +28,6 @@ migrate-up:
 
 run-control:
 	go run ./cmd/blackark-control serve
+
+smoke-cli-test: build
+	BLACKARK_BIN=./bin/blackark scripts/smoke-cli.sh

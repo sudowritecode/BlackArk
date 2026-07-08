@@ -3,6 +3,7 @@
 BlackArk is a lightweight multi-node Docker orchestrator. Workers poll the control plane and access only their local Docker Unix socket; the Docker API is never exposed over the network.
 
 To deploy and operate a simple app on an existing cluster, see the [user guide](docs/USER_GUIDE.md).
+For production installation, upgrades, rollback, and release verification, see the [operations runbook](docs/OPERATIONS.md).
 
 ## Local setup
 

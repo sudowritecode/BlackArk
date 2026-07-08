@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,9 +19,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+//go:embed webui
+var dashboardFS embed.FS
+
 type Server struct {
-	db    *pgxpool.Pool
-	token string
+	db               *pgxpool.Pool
+	token            string
+	dashboardEnabled bool
+	startedAt        time.Time
 }
 type instance struct {
 	ID          string  `json:"id"`
@@ -36,8 +43,9 @@ type app struct {
 	Instances []instance `json:"instances,omitempty"`
 }
 
-func New(db *pgxpool.Pool, token string) http.Handler {
-	s := &Server{db: db, token: token}
+func New(db *pgxpool.Pool, token string, opts ...bool) http.Handler {
+	dash := len(opts) > 0 && opts[0]
+	s := &Server{db: db, token: token, dashboardEnabled: dash, startedAt: time.Now()}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", s.health)
 	m.Handle("GET /api/v1/status", s.auth(http.HandlerFunc(s.status)))
@@ -50,8 +58,17 @@ func New(db *pgxpool.Pool, token string) http.Handler {
 	m.Handle("GET /v1/apps/{id}", s.auth(http.HandlerFunc(s.getApp)))
 	m.Handle("PATCH /v1/apps/{id}", s.auth(http.HandlerFunc(s.scaleApp)))
 	m.Handle("POST /v1/apps/{id}/deploy", s.auth(http.HandlerFunc(s.deployApp)))
+	m.Handle("POST /v1/apps/{id}/restart", s.auth(http.HandlerFunc(s.deployApp)))
 	m.Handle("GET /v1/apps/{id}/logs", s.auth(http.HandlerFunc(s.logs)))
 	m.Handle("DELETE /v1/apps/{id}", s.auth(http.HandlerFunc(s.deleteApp)))
+	if s.dashboardEnabled {
+		m.HandleFunc("GET /api/v1/dashboard", s.dashboard)
+		dashUI, _ := fs.Sub(dashboardFS, "webui")
+		m.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(dashUI))))
+		m.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/", 301)
+		})
+	}
 	return m
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -339,6 +356,168 @@ func (s *Server) apps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+type dashboardResponse struct {
+	Cluster clusterInfo   `json:"cluster"`
+	Nodes   nodeSection  `json:"nodes"`
+	Apps    appSection   `json:"apps"`
+}
+type clusterInfo struct {
+	URL          string `json:"url"`
+	Version      string `json:"version"`
+	UptimeSecs   int64  `json:"uptime_seconds"`
+}
+type nodeSection struct {
+	Healthy  int          `json:"healthy"`
+	Unhealthy int         `json:"unhealthy"`
+	Pending   int         `json:"pending"`
+	Total     int         `json:"total"`
+	Details   []nodeDetail `json:"details"`
+}
+type nodeDetail struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Status    string  `json:"status"`
+	CPUs      float64 `json:"cpus"`
+	CPUsUsed  float64 `json:"cpus_used"`
+	MemBytes  int64   `json:"mem_bytes"`
+	MemUsed   int64   `json:"mem_used_bytes"`
+	AppCount  int     `json:"app_count"`
+	LastSeen  *time.Time `json:"last_seen_at"`
+}
+type appSection struct {
+	Running int         `json:"running"`
+	Stopped int         `json:"stopped"`
+	Failed  int         `json:"failed"`
+	Total   int         `json:"total"`
+	Details []appDetail `json:"details"`
+}
+type appDetail struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Image           string `json:"image"`
+	DesiredReplicas int    `json:"desired_replicas"`
+	ReadyReplicas   int    `json:"ready_replicas"`
+	Status          string `json:"status"`
+}
+
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	var d dashboardResponse
+	d.Cluster = clusterInfo{
+		URL:        r.Host,
+		Version:    "0.1.0",
+		UptimeSecs: int64(time.Since(s.startedAt).Seconds()),
+	}
+
+	// Node counts
+	rows, err := s.db.Query(r.Context(), `SELECT status,count(*) FROM nodes GROUP BY status`)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st string
+		var n int
+		_ = rows.Scan(&st, &n)
+		d.Nodes.Total += n
+		switch st {
+		case "healthy":
+			d.Nodes.Healthy = n
+		case "unhealthy":
+			d.Nodes.Unhealthy = n
+		default:
+			d.Nodes.Pending += n
+		}
+	}
+	rows.Close()
+
+	// Node details
+	nrows, err := s.db.Query(r.Context(), `
+		SELECT n.id,n.name,n.status,n.capacity,n.resources,n.last_seen_at,
+			COALESCE((SELECT count(*) FROM deployments x WHERE x.node_id=n.id AND x.status!='delete'),0)
+		FROM nodes n ORDER BY n.name`)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer nrows.Close()
+	for nrows.Next() {
+		var nd nodeDetail
+		var capJSON, resJSON []byte
+		var seen *time.Time
+		if err := nrows.Scan(&nd.ID, &nd.Name, &nd.Status, &capJSON, &resJSON, &seen, &nd.AppCount); err != nil {
+			continue
+		}
+		nd.LastSeen = seen
+		if capJSON != nil {
+			var cap map[string]any
+			if json.Unmarshal(capJSON, &cap) == nil {
+				if v, ok := cap["cpus"].(float64); ok {
+					nd.CPUs = v
+				}
+				if v, ok := cap["memory_bytes"].(float64); ok {
+					nd.MemBytes = int64(v)
+				}
+			}
+		}
+		if resJSON != nil {
+			var res map[string]any
+			if json.Unmarshal(resJSON, &res) == nil {
+				if v, ok := res["cpus"].(float64); ok {
+					nd.CPUsUsed = v
+				}
+				if v, ok := res["memory_bytes"].(float64); ok {
+					nd.MemUsed = int64(v)
+				}
+			}
+		}
+		d.Nodes.Details = append(d.Nodes.Details, nd)
+	}
+	nrows.Close()
+
+	// App details with ready replica count
+	arows, err := s.db.Query(r.Context(), `
+		SELECT a.id,a.name,a.image,a.desired_replicas,
+			COALESCE((SELECT count(*) FROM deployments x WHERE x.app_id=a.id AND x.status='running'),0)
+		FROM apps a ORDER BY a.name`)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var ad appDetail
+		if err := arows.Scan(&ad.ID, &ad.Name, &ad.Image, &ad.DesiredReplicas, &ad.ReadyReplicas); err != nil {
+			continue
+		}
+		switch {
+		case ad.ReadyReplicas > 0 && ad.ReadyReplicas >= ad.DesiredReplicas:
+			ad.Status = "running"
+		case ad.ReadyReplicas > 0:
+			ad.Status = "degraded"
+		case ad.DesiredReplicas == 0:
+			ad.Status = "stopped"
+		default:
+			ad.Status = "pending"
+		}
+		d.Apps.Details = append(d.Apps.Details, ad)
+	}
+	arows.Close()
+
+	d.Apps.Total = len(d.Apps.Details)
+	for _, ad := range d.Apps.Details {
+		switch ad.Status {
+		case "running":
+			d.Apps.Running++
+		case "stopped":
+			d.Apps.Stopped++
+		case "degraded", "pending":
+			d.Apps.Failed++
+		}
+	}
+	writeJSON(w, 200, d)
+}
+
 func (s *Server) loadApp(r *http.Request) (app, error) {
 	var a app
 	err := s.db.QueryRow(r.Context(), `SELECT id,name,image,desired_replicas FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&a.ID, &a.Name, &a.Image, &a.Replicas)
