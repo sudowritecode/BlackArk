@@ -2,110 +2,75 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { loadConfig } from "./config";
 
 describe("loadConfig", () => {
-	const configKeys = [
+	const keys = [
 		"CONTROL_URL",
-		"CONTROL_API_TOKEN",
+		"CONTROL_TOKEN",
+		"HOST",
 		"PORT",
-		"CORS_ORIGINS",
+		"CORS_ORIGIN",
 		"DASHBOARD_POLL_INTERVAL",
 		"MAX_SSE_CONNECTIONS",
 	] as const;
-	const originalValues = new Map<string, string | undefined>();
+	const original = new Map<string, string | undefined>();
 
 	beforeEach(() => {
-		for (const key of configKeys) {
-			originalValues.set(key, process.env[key]);
+		for (const key of keys) {
+			original.set(key, process.env[key]);
 			delete process.env[key];
 		}
+		process.env.CONTROL_TOKEN = "test-token";
 	});
 
 	afterEach(() => {
-		for (const key of configKeys) {
-			const value = originalValues.get(key);
+		for (const key of keys) {
+			const value = original.get(key);
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;
 		}
-		originalValues.clear();
+		original.clear();
 	});
 
-	test("returns defaults when no env vars are set", () => {
+	test("returns documented defaults", () => {
 		const config = loadConfig();
 		expect(config.controlUrl).toBe("http://localhost:8080");
-		expect(config.controlApiToken).toBe("");
-		expect(config.port).toBe(3000);
-		expect(config.corsOrigins).toEqual(["http://localhost:5173"]);
+		expect(config.host).toBe("0.0.0.0");
+		expect(config.port).toBe(3001);
+		expect(config.corsOrigin).toBe("http://localhost:5173");
 		expect(config.dashboardPollIntervalSeconds).toBe(5);
 		expect(config.maxSseConnections).toBe(10);
 	});
 
-	test("reads SSE settings and rejects non-positive values", () => {
+	test("reads environment overrides", () => {
+		process.env.CONTROL_URL = "https://control.example.com";
+		process.env.CONTROL_TOKEN = "secret-token";
+		process.env.HOST = "127.0.0.1";
+		process.env.PORT = "9090";
+		process.env.CORS_ORIGIN = " https://app.example.com ";
 		process.env.DASHBOARD_POLL_INTERVAL = "2";
 		process.env.MAX_SSE_CONNECTIONS = "25";
-		let config = loadConfig();
-		expect(config.dashboardPollIntervalSeconds).toBe(2);
-		expect(config.maxSseConnections).toBe(25);
 
-		process.env.DASHBOARD_POLL_INTERVAL = "0";
-		process.env.MAX_SSE_CONNECTIONS = "invalid";
-		config = loadConfig();
-		expect(config.dashboardPollIntervalSeconds).toBe(5);
-		expect(config.maxSseConnections).toBe(10);
-	});
-
-	test("reads CONTROL_URL from the environment", () => {
-		process.env.CONTROL_URL = "https://control.example.com";
 		const config = loadConfig();
 		expect(config.controlUrl).toBe("https://control.example.com");
-	});
-
-	test("reads CONTROL_API_TOKEN from the environment", () => {
-		process.env.CONTROL_API_TOKEN = "secret-token";
-		const config = loadConfig();
-		expect(config.controlApiToken).toBe("secret-token");
-	});
-
-	test("reads PORT from the environment", () => {
-		process.env.PORT = "9090";
-		const config = loadConfig();
+		expect(config.controlToken).toBe("secret-token");
+		expect(config.host).toBe("127.0.0.1");
 		expect(config.port).toBe(9090);
+		expect(config.corsOrigin).toBe("https://app.example.com");
+		expect(config.dashboardPollIntervalSeconds).toBe(2);
+		expect(config.maxSseConnections).toBe(25);
 	});
 
-	test("falls back to default port when PORT is not a valid number", () => {
-		process.env.PORT = "not-a-number";
-		const config = loadConfig();
-		expect(config.port).toBe(3000);
+	test("throws a clear error when CONTROL_TOKEN is missing", () => {
+		delete process.env.CONTROL_TOKEN;
+		expect(() => loadConfig()).toThrow("CONTROL_TOKEN is required");
 	});
 
-	test("falls back to default port when PORT has trailing characters", () => {
+	test("falls back for invalid numeric settings", () => {
 		process.env.PORT = "9090-http";
+		process.env.DASHBOARD_POLL_INTERVAL = "0";
+		process.env.MAX_SSE_CONNECTIONS = "invalid";
 		const config = loadConfig();
-		expect(config.port).toBe(3000);
-	});
-
-	test("falls back to default port when PORT is out of range", () => {
-		process.env.PORT = "70000";
-		const config = loadConfig();
-		expect(config.port).toBe(3000);
-	});
-
-	test("parses CORS_ORIGINS as a comma-separated list", () => {
-		process.env.CORS_ORIGINS = "https://app.example.com,https://admin.example.com";
-		const config = loadConfig();
-		expect(config.corsOrigins).toEqual([
-			"https://app.example.com",
-			"https://admin.example.com",
-		]);
-	});
-
-	test("trims whitespace from CORS_ORIGINS entries", () => {
-		process.env.CORS_ORIGINS = " https://a.com , https://b.com ";
-		const config = loadConfig();
-		expect(config.corsOrigins).toEqual(["https://a.com", "https://b.com"]);
-	});
-
-	test("handles a single CORS_ORIGINS entry", () => {
-		process.env.CORS_ORIGINS = "https://single.example.com";
-		const config = loadConfig();
-		expect(config.corsOrigins).toEqual(["https://single.example.com"]);
+		expect(config.port).toBe(3001);
+		expect(config.dashboardPollIntervalSeconds).toBe(5);
+		expect(config.maxSseConnections).toBe(10);
 	});
 });

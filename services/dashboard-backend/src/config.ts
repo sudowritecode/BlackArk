@@ -1,17 +1,24 @@
 export interface Config {
 	readonly controlUrl: string;
+	readonly controlToken: string;
 	readonly controlApiToken: string;
+	readonly host: string;
 	readonly port: number;
-	readonly corsOrigins: string[];
+	readonly corsOrigin: string;
 	readonly dashboardPollIntervalSeconds: number;
 	readonly maxSseConnections: number;
 }
 
 export function loadConfig(): Config {
 	const controlUrl = process.env.CONTROL_URL ?? "http://localhost:8080";
-	const controlApiToken = process.env.CONTROL_API_TOKEN ?? "";
-	const port = parsePort(process.env.PORT, 3000);
-	const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGINS);
+	const controlToken = process.env.CONTROL_TOKEN?.trim();
+	if (!controlToken) {
+		throw new Error("CONTROL_TOKEN is required");
+	}
+	const host = process.env.HOST?.trim() || "0.0.0.0";
+	const port = parsePort(process.env.PORT, 3001);
+	const corsOrigin =
+		process.env.CORS_ORIGIN?.trim() || "http://localhost:5173";
 	const dashboardPollIntervalSeconds = parsePositiveInteger(
 		process.env.DASHBOARD_POLL_INTERVAL,
 		5,
@@ -21,34 +28,26 @@ export function loadConfig(): Config {
 		10,
 	);
 
-	if (!controlApiToken) {
-		console.warn(
-			"CONTROL_API_TOKEN is not set — requests to the control plane will lack an auth header",
-		);
-	}
-
 	return {
 		controlUrl,
-		controlApiToken,
+		controlToken,
+		// Compatibility for route factories that still use the earlier field name.
+		controlApiToken: controlToken,
+		host,
 		port,
-		corsOrigins,
+		corsOrigin,
 		dashboardPollIntervalSeconds,
 		maxSseConnections,
 	};
 }
 
-function parsePositiveInteger(raw: string | undefined, fallback: number): number {
+function parsePositiveInteger(
+	raw: string | undefined,
+	fallback: number,
+): number {
 	if (raw === undefined) return fallback;
 	const value = Number(raw);
 	return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function parseCorsOrigins(raw: string | undefined): string[] {
-	if (!raw) return ["http://localhost:5173"];
-	return raw
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
 }
 
 function parsePort(raw: string | undefined, fallback: number): number {

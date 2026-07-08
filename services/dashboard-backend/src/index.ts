@@ -10,7 +10,7 @@ const app = new Hono();
 app.use(
 	"/api/*",
 	cors({
-		origin: config.corsOrigins,
+		origin: config.corsOrigin,
 		allowMethods: ["GET", "POST", "OPTIONS"],
 		allowHeaders: ["Content-Type", "Authorization"],
 		exposeHeaders: ["Content-Type", "Cache-Control"],
@@ -65,6 +65,6 @@ app.get("/api/v1/events", (c) => {
 export default app;
 
 if (import.meta.main) {
-	Bun.serve({ fetch: app.fetch, port: config.port });
-	console.log(`dashboard backend listening on :${config.port}`);
+	Bun.serve({ fetch: app.fetch, hostname: config.host, port: config.port });
+	console.log(`dashboard backend listening on ${config.host}:${config.port}`);
 }
