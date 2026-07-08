@@ -30,6 +30,7 @@ type Server struct {
 	token            string
 	dashboardEnabled bool
 	startedAt        time.Time
+	events           *Ring
 }
 type instance struct {
 	ID          string  `json:"id"`
@@ -48,10 +49,11 @@ type app struct {
 
 func New(db *pgxpool.Pool, token string, opts ...bool) http.Handler {
 	dash := len(opts) > 0 && opts[0]
-	s := &Server{db: db, token: token, dashboardEnabled: dash, startedAt: time.Now()}
+	s := &Server{db: db, token: token, dashboardEnabled: dash, startedAt: time.Now(), events: NewRing(256)}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", s.health)
 	m.Handle("GET /api/v1/status", s.auth(http.HandlerFunc(s.status)))
+	m.Handle("GET /api/v1/activity", s.auth(http.HandlerFunc(s.activity)))
 	m.Handle("POST /v1/join-tokens", s.auth(http.HandlerFunc(s.createJoinToken)))
 	m.HandleFunc("POST /v1/nodes/join", s.join)
 	m.HandleFunc("POST /v1/nodes/{id}/heartbeat", s.heartbeat)
@@ -157,6 +159,12 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	s.events.Push(Event{
+		Type:     "node_joined",
+		Message:  "Node " + in.Name + " joined the cluster",
+		NodeID:   id,
+		NodeName: in.Name,
+	})
 	writeJSON(w, 201, map[string]string{"id": id, "credential": cred})
 }
 func (s *Server) agent(r *http.Request, id string) bool {
@@ -193,13 +201,13 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err == nil {
-		err = reconcile(r.Context(), tx)
+		err = s.reconcile(r.Context(), tx)
 	}
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	rows, err := tx.Query(r.Context(), `SELECT d.id,a.image,d.status FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.node_id=$1 AND d.status IN ('pending','delete') ORDER BY d.created_at`, id)
+	rows, err := tx.Query(r.Context(), `SELECT d.id,a.image,a.name,d.status FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.node_id=$1 AND d.status IN ('pending','delete') ORDER BY d.created_at`, id)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -207,13 +215,19 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	actions := []map[string]string{}
 	for rows.Next() {
-		var did, img, status string
-		_ = rows.Scan(&did, &img, &status)
+		var did, img, appName, status string
+		_ = rows.Scan(&did, &img, &appName, &status)
 		op := "run"
 		if status == "delete" {
 			op = "delete"
 		}
 		actions = append(actions, map[string]string{"deployment_id": did, "image": img, "operation": op})
+		s.events.Push(Event{
+			Type:    "deployment_" + op,
+			Message: "Instance " + did[:8] + " of " + appName + " " + op + " on node " + id[:8],
+			AppName: appName,
+			NodeID:  id,
+		})
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, err.Error())
@@ -222,14 +236,35 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"actions": actions})
 }
 
-func reconcile(ctx interface{ Done() <-chan struct{} }, tx pgx.Tx) error { // pgx accepts context.Context; adapter keeps signature concise
+func (s *Server) reconcile(ctx interface{ Done() <-chan struct{} }, tx pgx.Tx) error { // pgx accepts context.Context; adapter keeps signature concise
 	c := ctx.(interface {
 		Done() <-chan struct{}
 		Err() error
 		Value(any) any
 		Deadline() (time.Time, bool)
 	})
-	_, err := tx.Exec(c, `UPDATE nodes SET status='unhealthy',updated_at=now() WHERE last_seen_at < now()-interval '30 seconds' AND status='healthy'`)
+	rows, err := tx.Query(c, `SELECT id,name FROM nodes WHERE last_seen_at < now()-interval '30 seconds' AND status='healthy'`)
+	if err != nil {
+		return err
+	}
+	var unhealthies []Event
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		unhealthies = append(unhealthies, Event{
+			Type:     "node_unhealthy",
+			Message:  "Node " + name + " marked unhealthy (30s timeout)",
+			NodeID:   id,
+			NodeName: name,
+		})
+	}
+	rows.Close()
+	for _, e := range unhealthies {
+		s.events.Push(e)
+	}
+	_, err = tx.Exec(c, `UPDATE nodes SET status='unhealthy',updated_at=now() WHERE last_seen_at < now()-interval '30 seconds' AND status='healthy'`)
 	if err != nil {
 		return err
 	}
@@ -237,7 +272,7 @@ func reconcile(ctx interface{ Done() <-chan struct{} }, tx pgx.Tx) error { // pg
 	if err != nil {
 		return err
 	}
-	rows, err := tx.Query(c, `SELECT id,desired_replicas FROM apps`)
+	rows, err = tx.Query(c, `SELECT id,desired_replicas FROM apps`)
 	if err != nil {
 		return err
 	}
@@ -342,6 +377,12 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 409, err.Error())
 		return
 	}
+	s.events.Push(Event{
+		Type:    "app_created",
+		Message: "App " + a.Name + " created with " + strconv.Itoa(a.Replicas) + " replicas",
+		AppID:   a.ID,
+		AppName: a.Name,
+	})
 	writeJSON(w, 201, a)
 }
 func (s *Server) apps(w http.ResponseWriter, r *http.Request) {
@@ -359,33 +400,34 @@ func (s *Server) apps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+
 type dashboardResponse struct {
-	Cluster clusterInfo   `json:"cluster"`
-	Nodes   nodeSection  `json:"nodes"`
-	Apps    appSection   `json:"apps"`
+	Cluster clusterInfo `json:"cluster"`
+	Nodes   nodeSection `json:"nodes"`
+	Apps    appSection  `json:"apps"`
 }
 type clusterInfo struct {
-	URL          string `json:"url"`
-	Version      string `json:"version"`
-	UptimeSecs   int64  `json:"uptime_seconds"`
+	URL        string `json:"url"`
+	Version    string `json:"version"`
+	UptimeSecs int64  `json:"uptime_seconds"`
 }
 type nodeSection struct {
-	Healthy  int          `json:"healthy"`
-	Unhealthy int         `json:"unhealthy"`
-	Pending   int         `json:"pending"`
-	Total     int         `json:"total"`
+	Healthy   int          `json:"healthy"`
+	Unhealthy int          `json:"unhealthy"`
+	Pending   int          `json:"pending"`
+	Total     int          `json:"total"`
 	Details   []nodeDetail `json:"details"`
 }
 type nodeDetail struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Status    string  `json:"status"`
-	CPUs      float64 `json:"cpus"`
-	CPUsUsed  float64 `json:"cpus_used"`
-	MemBytes  int64   `json:"mem_bytes"`
-	MemUsed   int64   `json:"mem_used_bytes"`
-	AppCount  int     `json:"app_count"`
-	LastSeen  *time.Time `json:"last_seen_at"`
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	Status   string     `json:"status"`
+	CPUs     float64    `json:"cpus"`
+	CPUsUsed float64    `json:"cpus_used"`
+	MemBytes int64      `json:"mem_bytes"`
+	MemUsed  int64      `json:"mem_used_bytes"`
+	AppCount int        `json:"app_count"`
+	LastSeen *time.Time `json:"last_seen_at"`
 }
 type appSection struct {
 	Running int         `json:"running"`
@@ -521,6 +563,14 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, d)
 }
 
+func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
+	n := 50
+	if m, _ := strconv.Atoi(r.URL.Query().Get("limit")); m > 0 && m <= 500 {
+		n = m
+	}
+	writeJSON(w, 200, s.events.Recent(n))
+}
+
 func (s *Server) loadApp(r *http.Request) (app, error) {
 	var a app
 	err := s.db.QueryRow(r.Context(), `SELECT id,name,image,desired_replicas FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&a.ID, &a.Name, &a.Image, &a.Replicas)
@@ -564,12 +614,20 @@ func (s *Server) scaleApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "app not found")
 		return
 	}
+	var name string
+	_ = s.db.QueryRow(r.Context(), `SELECT name FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&name)
+	s.events.Push(Event{
+		Type:    "app_scaled",
+		Message: "App " + name + " scaled to " + strconv.Itoa(in.Replicas) + " replicas",
+		AppID:   r.PathValue("id"),
+		AppName: name,
+	})
 	s.deployApp(w, r)
 }
 func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	tx, err := s.db.Begin(r.Context())
 	if err == nil {
-		err = reconcile(r.Context(), tx)
+		err = s.reconcile(r.Context(), tx)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -585,15 +643,29 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "app not found")
 		return
 	}
+	s.events.Push(Event{
+		Type:    "app_deployed",
+		Message: "App " + a.Name + " deployed",
+		AppID:   a.ID,
+		AppName: a.Name,
+	})
 	writeJSON(w, 202, a)
 }
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
+	var name string
+	_ = s.db.QueryRow(r.Context(), `SELECT name FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&name)
 	tag, err := s.db.Exec(r.Context(), `UPDATE deployments SET status='delete' WHERE app_id=$1`, r.PathValue("id"))
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "app not found")
 		return
 	}
 	_, _ = s.db.Exec(r.Context(), `UPDATE apps SET desired_replicas=0 WHERE id=$1`, r.PathValue("id"))
+	s.events.Push(Event{
+		Type:    "app_deleted",
+		Message: "App " + name + " deleted",
+		AppID:   r.PathValue("id"),
+		AppName: name,
+	})
 	w.WriteHeader(204)
 }
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
