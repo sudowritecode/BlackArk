@@ -33,7 +33,7 @@ func main() {
 		log.Print("migrations applied")
 		return
 	}
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: control.New(db, cfg.APIToken), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: control.New(db, cfg.APIToken, cfg.DashboardEnabled), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		log.Printf("control plane listening on %s", cfg.ListenAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -61,6 +61,14 @@ test "$(jq '[.instances[] | select(.status == "running")] | length' <<<"$state")
 
 api GET "/v1/apps/$app_id/logs?tail=50" >/dev/null
 
+api PATCH "/v1/apps/$app_id" '{"replicas":1}' >/dev/null
+for _ in {1..60}; do
+  state=$(api GET "/v1/apps/$app_id")
+  [ "$(jq '[.instances[] | select(.status == "running")] | length' <<<"$state")" -eq 1 ] && break
+  sleep 2
+done
+test "$(jq '[.instances[] | select(.status == "running")] | length' <<<"$state")" -eq 1
+
 if [ -z "$BLACKARK_SKIP_RESTART_CHECK" ]; then
   container_id=$(jq -er '[.instances[] | select(.status == "running" and .container_id != null)][0].container_id' <<<"$state")
   docker stop "$container_id" >/dev/null
@@ -72,4 +80,4 @@ if [ -z "$BLACKARK_SKIP_RESTART_CHECK" ]; then
   test "$running" = "true"
 fi
 
-echo "MVP verification passed: two workers, deploy, inspect, logs, HTTPS route, scale, restart, and cleanup"
+echo "MVP verification passed: two workers, deploy, inspect, logs, HTTPS route, scale up/down, restart, and cleanup"

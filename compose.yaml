@@ -18,6 +18,7 @@ services:
       BLACKARK_DATABASE_URL: postgres://blackark:blackark@postgres:5432/blackark?sslmode=disable
       BLACKARK_API_TOKEN: ${BLACKARK_API_TOKEN:-local-development-token}
       BLACKARK_LISTEN_ADDR: :8080
+      BLACKARK_DASHBOARD_ENABLED: ${BLACKARK_DASHBOARD_ENABLED:-true}
     depends_on:
       postgres: {condition: service_healthy}
     ports: ["${BLACKARK_CONTROL_PORT:-8080}:8080"]

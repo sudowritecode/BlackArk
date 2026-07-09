@@ -1,0 +1,40 @@
+BlackArk MVP validation v1.0.3
+timestamp=2026-07-08T15:13:45Z
+host=accepting-chuckwalla
+candidate_commit=2c787ab
+topology=two independently registered logical workers sharing one Docker engine
+nodes_before=
+[
+  {
+    "id": "0e2ef232-d5ad-4c74-8ac1-d62c0c5befe5",
+    "name": "validation-worker-1",
+    "status": "healthy"
+  },
+  {
+    "id": "b8bbb160-6f75-4d0d-b802-80860513baac",
+    "name": "validation-worker-2",
+    "status": "healthy"
+  }
+]
+https_health={"status":"ok"}
+MVP verification passed: two workers, deploy, inspect, logs, HTTPS route, scale, restart, and cleanup
+nodes_after=
+[
+  {
+    "id": "0e2ef232-d5ad-4c74-8ac1-d62c0c5befe5",
+    "name": "validation-worker-1",
+    "status": "healthy"
+  },
+  {
+    "id": "b8bbb160-6f75-4d0d-b802-80860513baac",
+    "name": "validation-worker-2",
+    "status": "healthy"
+  }
+]
+worker_errors=
+app_containers_after_cleanup=
+blackark-c8600f0c-99a8-4e50-b9c6-b349084d9bd2 Up 8 seconds
+blackark-44332a6b-6867-4510-814d-e4106d46ce11 Up 17 seconds
+blackark-e4eb3259-6935-425f-9d42-184ce8386da2 Up Less than a second
+cleanup_verified_at=2026-07-08T15:14:37Z
+remaining_app_containers=0
