@@ -44,7 +44,7 @@ type app struct {
 	Name      string     `json:"name"`
 	Image     string     `json:"image"`
 	Replicas  int        `json:"replicas"`
-	Instances []instance `json:"instances,omitempty"`
+	Instances []instance `json:"instances"`
 }
 
 func New(db *pgxpool.Pool, token string, opts ...bool) http.Handler {
@@ -572,7 +572,7 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loadApp(r *http.Request) (app, error) {
-	var a app
+	a := app{Instances: []instance{}}
 	err := s.db.QueryRow(r.Context(), `SELECT id,name,image,desired_replicas FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&a.ID, &a.Name, &a.Image, &a.Replicas)
 	if err != nil {
 		return a, err
@@ -653,10 +653,15 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	var name string
-	_ = s.db.QueryRow(r.Context(), `SELECT name FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&name)
-	tag, err := s.db.Exec(r.Context(), `UPDATE deployments SET status='delete' WHERE app_id=$1`, r.PathValue("id"))
-	if err != nil || tag.RowsAffected() == 0 {
+	if err := s.db.QueryRow(r.Context(), `SELECT name FROM apps WHERE id=$1`, r.PathValue("id")).Scan(&name); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "app not found")
+		return
+	} else if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `UPDATE deployments SET status='delete' WHERE app_id=$1`, r.PathValue("id")); err != nil {
+		writeError(w, 500, err.Error())
 		return
 	}
 	_, _ = s.db.Exec(r.Context(), `UPDATE apps SET desired_replicas=0 WHERE id=$1`, r.PathValue("id"))

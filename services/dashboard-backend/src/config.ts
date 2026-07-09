@@ -11,14 +11,14 @@ export interface Config {
 
 export function loadConfig(): Config {
 	const controlUrl = process.env.CONTROL_URL ?? "http://localhost:8080";
-	const controlToken = process.env.CONTROL_TOKEN?.trim();
+	const controlToken = readEnv("CONTROL_API_TOKEN", "CONTROL_TOKEN");
 	if (!controlToken) {
-		throw new Error("CONTROL_TOKEN is required");
+		throw new Error("CONTROL_API_TOKEN is required");
 	}
 	const host = process.env.HOST?.trim() || "0.0.0.0";
 	const port = parsePort(process.env.PORT, 3001);
 	const corsOrigin =
-		process.env.CORS_ORIGIN?.trim() || "http://localhost:5173";
+		readEnv("CORS_ORIGINS", "CORS_ORIGIN") || "http://localhost:5173";
 	const dashboardPollIntervalSeconds = parsePositiveInteger(
 		process.env.DASHBOARD_POLL_INTERVAL,
 		5,
@@ -39,6 +39,12 @@ export function loadConfig(): Config {
 		dashboardPollIntervalSeconds,
 		maxSseConnections,
 	};
+}
+
+function readEnv(primary: string, fallback: string): string | undefined {
+	return (
+		process.env[primary]?.trim() || process.env[fallback]?.trim() || undefined
+	);
 }
 
 function parsePositiveInteger(

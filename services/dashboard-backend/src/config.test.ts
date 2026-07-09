@@ -4,9 +4,11 @@ import { loadConfig } from "./config";
 describe("loadConfig", () => {
 	const keys = [
 		"CONTROL_URL",
+		"CONTROL_API_TOKEN",
 		"CONTROL_TOKEN",
 		"HOST",
 		"PORT",
+		"CORS_ORIGINS",
 		"CORS_ORIGIN",
 		"DASHBOARD_POLL_INTERVAL",
 		"MAX_SSE_CONNECTIONS",
@@ -18,7 +20,7 @@ describe("loadConfig", () => {
 			original.set(key, process.env[key]);
 			delete process.env[key];
 		}
-		process.env.CONTROL_TOKEN = "test-token";
+		process.env.CONTROL_API_TOKEN = "test-token";
 	});
 
 	afterEach(() => {
@@ -42,10 +44,10 @@ describe("loadConfig", () => {
 
 	test("reads environment overrides", () => {
 		process.env.CONTROL_URL = "https://control.example.com";
-		process.env.CONTROL_TOKEN = "secret-token";
+		process.env.CONTROL_API_TOKEN = "secret-token";
 		process.env.HOST = "127.0.0.1";
 		process.env.PORT = "9090";
-		process.env.CORS_ORIGIN = " https://app.example.com ";
+		process.env.CORS_ORIGINS = " https://app.example.com ";
 		process.env.DASHBOARD_POLL_INTERVAL = "2";
 		process.env.MAX_SSE_CONNECTIONS = "25";
 
@@ -59,9 +61,20 @@ describe("loadConfig", () => {
 		expect(config.maxSseConnections).toBe(25);
 	});
 
-	test("throws a clear error when CONTROL_TOKEN is missing", () => {
-		delete process.env.CONTROL_TOKEN;
-		expect(() => loadConfig()).toThrow("CONTROL_TOKEN is required");
+	test("throws a clear error when CONTROL_API_TOKEN is missing", () => {
+		delete process.env.CONTROL_API_TOKEN;
+		expect(() => loadConfig()).toThrow("CONTROL_API_TOKEN is required");
+	});
+
+	test("keeps compatibility with legacy environment names", () => {
+		delete process.env.CONTROL_API_TOKEN;
+		process.env.CONTROL_TOKEN = "legacy-token";
+		process.env.CORS_ORIGIN = " https://legacy.example.com ";
+
+		const config = loadConfig();
+		expect(config.controlToken).toBe("legacy-token");
+		expect(config.controlApiToken).toBe("legacy-token");
+		expect(config.corsOrigin).toBe("https://legacy.example.com");
 	});
 
 	test("falls back for invalid numeric settings", () => {

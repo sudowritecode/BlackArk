@@ -58,7 +58,7 @@ blackark describe app my-nginx
 
 The deployment is ready when all instances report `"status": "running"`. With two or more healthy workers, BlackArk spreads replicas across nodes when capacity permits.
 
-You can also apply the manifest directly from a URL or generate it inline — the CLI accepts a local file path with `-f`.
+The CLI accepts a local file path with `-f`.
 
 ## 3. Operate the app
 
@@ -101,7 +101,72 @@ blackark delete app my-nginx
 
 A successful delete prints `app deleted`. The app record remains for audit purposes with zero desired replicas.
 
-## 4. YAML App manifest reference
+## 4. Dashboard
+
+### CLI dashboard
+
+Display a one-time cluster summary with the credentials saved by `blackark login`:
+
+```sh
+blackark dashboard [--watch] [--interval N]
+
+# One-time snapshot
+blackark dashboard
+```
+
+Use watch mode to clear and redraw the terminal automatically. The default refresh interval is five seconds; `--interval` accepts a number of seconds and values below one are treated as one second.
+
+```sh
+# Refresh every five seconds
+blackark dashboard --watch
+
+# Refresh every ten seconds
+blackark dashboard --watch --interval 10
+```
+
+The shorthand flags are `-w` and `-i`. `--interval` has no effect unless watch mode is enabled. Stop watch mode with `Ctrl-C`.
+
+Example output:
+
+```text
+BlackArk Cluster   blackark.example.com
+Version            1.0.3   Uptime   86400s
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Nodes:             2 healthy   ·   0 unhealthy   ·   0 pending
+Apps:              1 running   ·   0 stopped     ·   0 failed
+
+NODE       STATUS    CPUS   MEM             APPS
+worker-1   healthy   1/4    1.2GB/8.0GB     1
+worker-2   healthy   0/4    900.0MB/8.0GB   0
+
+APP        IMAGE                 REPLICAS   STATUS
+my-nginx   nginx:1.27-alpine     2/2        running
+```
+
+### Web dashboard
+
+When the dashboard bundled with the control plane is enabled, open:
+
+```text
+https://blackark.example.com/dashboard/
+```
+
+Set `BLACKARK_DASHBOARD_ENABLED=true` on `blackark-control` to register the dashboard UI and API routes. The Compose configuration enables it by default. Treat the dashboard as an administrative endpoint and expose it only over HTTPS on trusted networks.
+
+The standalone Vue dashboard is available at `http://localhost:5173` during development. It expects the dashboard backend at `http://localhost:3001`; configure that backend with the control-plane URL and API token:
+
+```sh
+CONTROL_URL=https://blackark.example.com \
+CONTROL_API_TOKEN="$BLACKARK_API_TOKEN" \
+CORS_ORIGINS=http://localhost:5173 \
+  bun run dev
+```
+
+`CONTROL_API_TOKEN` is the same value configured as `BLACKARK_API_TOKEN` on the control plane. It stays on the backend and is added to upstream requests as a bearer token. For deployments where the browser authenticates directly, enter the token through the dashboard's **API authentication** settings; it is stored in browser `localStorage` under `blackark.apiToken`. A build-time `VITE_API_TOKEN` can supply the browser token instead, but do not embed production secrets in a public frontend bundle.
+
+The standalone dashboard uses an SSE connection to `/api/v1/events`. The backend sends a fresh dashboard snapshot every five seconds, so node and app cards can update without a page reload. If the stream disconnects, the SSE client reconnects automatically with exponential backoff, starting at one second and capped at 30 seconds.
+
+## 5. YAML App manifest reference
 
 The `blackark/v1` App manifest supports the following fields:
 
@@ -135,13 +200,13 @@ Create a single-use join token on the control plane (requires the API token):
 curl -s -X POST -H "Authorization: Bearer $BLACKARK_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"ttl_seconds":600}' \
-  "$BLACKARK_URL/v1/join-tokens"
+  "$BLACKARK_CONTROL_URL/v1/join-tokens"
 ```
 
 On the worker host, start an agent that can reach the control URL and local Docker socket:
 
 ```sh
-BLACKARK_CONTROL_URL="$BLACKARK_URL" \
+BLACKARK_CONTROL_URL="$BLACKARK_CONTROL_URL" \
 BLACKARK_JOIN_TOKEN="$JOIN_TOKEN" \
 BLACKARK_NODE_NAME=worker-1 \
   blackark-agent

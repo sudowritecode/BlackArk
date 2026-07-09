@@ -1,6 +1,6 @@
 # Install, upgrade, and rollback
 
-This runbook installs BlackArk release binaries on one Linux control host and two independent Linux worker hosts. Commands use `v1.0.3` and `linux-amd64`; change both values together for another published release or architecture.
+This runbook installs BlackArk on one Linux control host and two independent Linux worker hosts. Commands use `v1.0.3`; change the version for another published release.
 
 ## Prerequisites
 
@@ -11,21 +11,30 @@ This runbook installs BlackArk release binaries on one Linux control host and tw
 
 ## Install
 
-Download the three archives from the GitHub release, verify their published checksums or provenance, and extract the appropriate binary on each host:
+The release publishes one bundle containing `blackark`, `blackark-control`, `blackark-agent`, and the installer. The installer downloads that bundle, installs the binaries, and can write systemd units for the control plane or worker agent.
+
+Install only the operator CLI on a workstation:
 
 ```sh
 VERSION=v1.0.3
-ARCH=linux-amd64
-curl -fLO "https://github.com/sudowritecode/BlackArk/releases/download/$VERSION/blackark-control-$VERSION-$ARCH.tar.gz"
-curl -fLO "https://github.com/sudowritecode/BlackArk/releases/download/$VERSION/blackark-agent-$VERSION-$ARCH.tar.gz"
-curl -fLO "https://github.com/sudowritecode/BlackArk/releases/download/$VERSION/blackark-$VERSION-$ARCH.tar.gz"
-tar -xzf "blackark-control-$VERSION-$ARCH.tar.gz"
-tar -xzf "blackark-agent-$VERSION-$ARCH.tar.gz"
-tar -xzf "blackark-$VERSION-$ARCH.tar.gz"
-sudo install -m 0755 blackark-control blackark-agent blackark /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | \
+  VERSION=$VERSION ROLE=cli sh
 ```
 
-On the control host, store `BLACKARK_API_TOKEN`, `BLACKARK_DB_PATH`, and the listen address in a root-readable environment file. Run `blackark-control migrate`, then run `blackark-control serve` under a dedicated `systemd` service account. Configure Caddy from `deploy/Caddyfile` and confirm `https://<control-domain>/healthz` returns `{"status":"ok"}`.
+On the control host, install the CLI plus control service. The script writes `/etc/blackark/control.env`, creates a dedicated `blackark` system user, installs `blackark-control.service`, starts it, and enables it at boot:
+
+```sh
+VERSION=v1.0.3
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | \
+  VERSION=$VERSION \
+  ROLE=control \
+  BLACKARK_API_TOKEN='<strong-token>' \
+  BLACKARK_DATABASE_URL='postgres://blackark:password@127.0.0.1:5432/blackark?sslmode=disable' \
+  BLACKARK_LISTEN_ADDR=':8080' \
+  sh
+```
+
+Configure Caddy from `deploy/Caddyfile` and confirm `https://<control-domain>/healthz` returns `{"status":"ok"}`.
 
 Create one single-use join token per worker:
 
@@ -35,7 +44,20 @@ curl -fsS -X POST -H "Authorization: Bearer $BLACKARK_API_TOKEN" \
   "https://$BLACKARK_DOMAIN/v1/join-tokens"
 ```
 
-On each worker, run `blackark-agent` under `systemd` with a unique `BLACKARK_NODE_NAME`, `BLACKARK_CONTROL_URL=https://<control-domain>`, and its own join token. After enrollment, replace the join token with the node ID and credential printed by the agent and store those values in the host secret store. Confirm that `GET /v1/nodes` reports both independent hosts as healthy.
+On each worker, install and start the agent with a unique `BLACKARK_NODE_NAME`, `BLACKARK_CONTROL_URL=https://<control-domain>`, and its own join token. The script writes `/etc/blackark/agent.env`, installs `blackark-agent.service`, starts it, and enables it at boot:
+
+```sh
+VERSION=v1.0.3
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | \
+  VERSION=$VERSION \
+  ROLE=agent \
+  BLACKARK_CONTROL_URL="https://$BLACKARK_DOMAIN" \
+  BLACKARK_JOIN_TOKEN='<single-use-join-token>' \
+  BLACKARK_NODE_NAME="$(hostname)" \
+  sh
+```
+
+After enrollment, replace the join token in `/etc/blackark/agent.env` with the node ID and credential printed by the agent logs and store those values in the host secret store. Confirm that `GET /v1/nodes` reports both independent hosts as healthy.
 
 From a clean operator machine, run the release gate:
 
