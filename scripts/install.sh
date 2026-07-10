@@ -133,7 +133,8 @@ WantedBy=multi-user.target
 EOF
 	as_root install -m 0644 "$tmp_unit" "$SYSTEMD_DIR/blackark-control.service"
 	as_root systemctl daemon-reload
-	as_root systemctl enable --now blackark-control.service
+	as_root systemctl enable blackark-control.service
+	as_root systemctl restart blackark-control.service
 }
 
 require_agent_env() {
@@ -181,7 +182,8 @@ WantedBy=multi-user.target
 EOF
 	as_root install -m 0644 "$tmp_unit" "$SYSTEMD_DIR/blackark-agent.service"
 	as_root systemctl daemon-reload
-	as_root systemctl enable --now blackark-agent.service
+	as_root systemctl enable blackark-agent.service
+	as_root systemctl restart blackark-agent.service
 }
 
 need curl

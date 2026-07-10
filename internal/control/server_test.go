@@ -50,5 +50,17 @@ func TestDashboardRouteRegistration(t *testing.T) {
 			t.Fatalf("expected HTML content type, got %q", ct)
 		}
 	})
+	t.Run("enabled_root_redirects_to_web_ui", func(t *testing.T) {
+		mux := New(nil, "token", true)
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		if w.Code != http.StatusMovedPermanently {
+			t.Fatalf("root expected redirect, got %d", w.Code)
+		}
+		if got := w.Header().Get("Location"); got != "/dashboard/" {
+			t.Fatalf("root redirect location=%q want /dashboard/", got)
+		}
+	})
 	// "enabled" dashboard API endpoint verified by build + needs DB
 }

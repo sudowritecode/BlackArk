@@ -69,9 +69,12 @@ func New(db *pgxpool.Pool, token string, opts ...bool) http.Handler {
 	if s.dashboardEnabled {
 		m.HandleFunc("GET /api/v1/dashboard", s.dashboard)
 		dashUI, _ := fs.Sub(dashboardFS, "webui")
+		m.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/dashboard/", http.StatusMovedPermanently)
+		})
 		m.Handle("GET /dashboard/", http.StripPrefix("/dashboard/", http.FileServer(http.FS(dashUI))))
 		m.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/dashboard/", 301)
+			http.Redirect(w, r, "/dashboard/", http.StatusMovedPermanently)
 		})
 	}
 	return m
