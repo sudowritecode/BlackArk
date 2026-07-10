@@ -7,6 +7,7 @@ ROLE="${ROLE:-all}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 ENV_DIR="${ENV_DIR:-/etc/blackark}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+BUNDLE_PATH="${BUNDLE_PATH:-}"
 
 need() {
 	if ! command -v "$1" >/dev/null 2>&1; then
@@ -45,13 +46,22 @@ detect_platform() {
 download_bundle() {
 	tmp="$(mktemp -d)"
 	trap 'rm -rf "$tmp"' EXIT INT TERM
-	if [ "$VERSION" = "latest" ]; then
+	if [ "$BUNDLE_PATH" != "" ]; then
+		if [ ! -f "$BUNDLE_PATH" ]; then
+			echo "blackark install: BUNDLE_PATH does not exist: $BUNDLE_PATH" >&2
+			exit 1
+		fi
+		echo "blackark install: using local bundle $BUNDLE_PATH"
+		cp "$BUNDLE_PATH" "$tmp/blackark-bundle.tar.gz"
+	elif [ "$VERSION" = "latest" ]; then
 		url="https://github.com/$REPO/releases/latest/download/blackark-bundle-$PLATFORM.tar.gz"
+		echo "blackark install: downloading $url"
+		curl -fsSL "$url" -o "$tmp/blackark-bundle.tar.gz"
 	else
 		url="https://github.com/$REPO/releases/download/$VERSION/blackark-bundle-$VERSION-$PLATFORM.tar.gz"
+		echo "blackark install: downloading $url"
+		curl -fsSL "$url" -o "$tmp/blackark-bundle.tar.gz"
 	fi
-	echo "blackark install: downloading $url"
-	curl -fsSL "$url" -o "$tmp/blackark-bundle.tar.gz"
 	tar -xzf "$tmp/blackark-bundle.tar.gz" -C "$tmp"
 	BUNDLE_DIR="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 	if [ ! -x "$BUNDLE_DIR/blackark" ]; then
