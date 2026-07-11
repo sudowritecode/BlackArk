@@ -20,6 +20,62 @@ blackark login --url https://blackark.example.com --token "$BLACKARK_API_TOKEN"
 
 Credentials are saved to `~/.config/blackark/config.yaml` (or `$BLACKARK_CONFIG`). Subsequent commands read the config file automatically.
 
+## Install and join one-liners
+
+Install only the CLI on an operator workstation:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | VERSION=v1.0.3 ROLE=cli sh
+```
+
+Install the control plane on a Linux host with systemd:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | VERSION=v1.0.3 ROLE=control BLACKARK_API_TOKEN='<strong-token>' BLACKARK_DATABASE_URL='postgres://blackark:password@127.0.0.1:5432/blackark?sslmode=disable' sh
+```
+
+Create a join token from a logged-in operator machine:
+
+```sh
+JOIN_TOKEN=$(blackark join-token -o json | jq -r .token)
+```
+
+Join a worker to the control plane:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | VERSION=v1.0.3 ROLE=agent BLACKARK_CONTROL_URL='https://blackark.example.com' BLACKARK_JOIN_TOKEN="$JOIN_TOKEN" BLACKARK_NODE_NAME="$(hostname)" sh
+```
+
+Bootstrap a single-node control plane plus local worker:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts/install.sh | VERSION=v1.0.3 ROLE=single-node BLACKARK_API_TOKEN='<strong-token>' BLACKARK_DATABASE_URL='postgres://blackark:password@127.0.0.1:5432/blackark?sslmode=disable' sh
+```
+
+The agent writes `/etc/blackark/agent.env` and, after the first successful join, replaces bootstrap secrets with durable `BLACKARK_NODE_ID` and `BLACKARK_NODE_TOKEN` values.
+
+## CLI commands
+
+Available commands:
+
+```text
+blackark login --url <control-url> --token <api-token>
+blackark health
+blackark status
+blackark join-token [--ttl seconds] [-o table|json]
+blackark get nodes [-o table|json]
+blackark get apps [-o table|json]
+blackark apply -f <manifest.yaml>
+blackark describe app <app-id> [-o table|json]
+blackark logs [--tail 1..5000] <app-id>
+blackark scale <app-id> <replicas>
+blackark restart <app-id>
+blackark delete app <app-id>
+blackark dashboard [--watch] [--interval seconds]
+```
+
+Use `BLACKARK_CONFIG` to point the CLI at a non-default config file. `BLACKARK_CONTROL_URL` and `BLACKARK_API_TOKEN` can also supply credentials without writing a config file.
+
 ## 1. Check the cluster
 
 ```sh
@@ -195,12 +251,7 @@ Workers access the local Docker socket. Treat worker hosts and the BlackArk API 
 Create a single-use join token on the control plane (requires the API token):
 
 ```sh
-# The API token is still needed for admin operations
-# Create a join token with timeout-limited validity:
-curl -s -X POST -H "Authorization: Bearer $BLACKARK_API_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"ttl_seconds":600}' \
-  "$BLACKARK_CONTROL_URL/v1/join-tokens"
+blackark join-token --ttl 600
 ```
 
 On the worker host, start an agent that can reach the control URL and local Docker socket:
@@ -208,11 +259,12 @@ On the worker host, start an agent that can reach the control URL and local Dock
 ```sh
 BLACKARK_CONTROL_URL="$BLACKARK_CONTROL_URL" \
 BLACKARK_JOIN_TOKEN="$JOIN_TOKEN" \
+BLACKARK_AGENT_ENV_FILE=/etc/blackark/agent.env \
 BLACKARK_NODE_NAME=worker-1 \
   blackark-agent
 ```
 
-On first join, the agent logs its node ID and credential. Store both in a secret manager and use `BLACKARK_NODE_ID` and `BLACKARK_NODE_TOKEN` on subsequent starts; join tokens are single-use and expire.
+On first join, the agent exchanges the single-use token for durable node credentials. If `BLACKARK_AGENT_ENV_FILE` is set, it rewrites that file with `BLACKARK_NODE_ID` and `BLACKARK_NODE_TOKEN` and removes bootstrap secrets. Store the resulting credentials in a secret manager.
 
 ## Common failures
 

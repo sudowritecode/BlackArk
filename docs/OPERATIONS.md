@@ -44,7 +44,7 @@ curl -fsS -X POST -H "Authorization: Bearer $BLACKARK_API_TOKEN" \
   "https://$BLACKARK_DOMAIN/v1/join-tokens"
 ```
 
-On each worker, install and start the agent with a unique `BLACKARK_NODE_NAME`, `BLACKARK_CONTROL_URL=https://<control-domain>`, and its own join token. The script writes `/etc/blackark/agent.env`, installs `blackark-agent.service`, starts it, and enables it at boot:
+On each worker, install and start the agent with a unique `BLACKARK_NODE_NAME`, `BLACKARK_CONTROL_URL=https://<control-domain>`, and either its own join token or the admin API token. The script writes `/etc/blackark/agent.env`, installs `blackark-agent.service`, starts it, and enables it at boot. On first start the agent exchanges the bootstrap secret for durable node credentials, rewrites `/etc/blackark/agent.env` with `BLACKARK_NODE_ID` and `BLACKARK_NODE_TOKEN`, and removes `BLACKARK_JOIN_TOKEN`/`BLACKARK_API_TOKEN` from that file:
 
 ```sh
 VERSION=v1.0.3
@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/sudowritecode/BlackArk/main/scripts
   sh
 ```
 
-After enrollment, replace the join token in `/etc/blackark/agent.env` with the node ID and credential printed by the agent logs and store those values in the host secret store. Confirm that `GET /v1/nodes` reports both independent hosts as healthy.
+For single-node installs, `ROLE=single-node` can use the control-plane `BLACKARK_API_TOKEN` and defaults the local agent to `BLACKARK_CONTROL_URL=http://127.0.0.1:8080` when no control URL is supplied. After enrollment, store the generated `/etc/blackark/agent.env` values in the host secret store and confirm that `GET /v1/nodes` reports both independent hosts as healthy.
 
 From a clean operator machine, run the release gate:
 

@@ -14,6 +14,7 @@ type Config struct {
 	NodeID           string
 	NodeToken        string
 	JoinToken        string
+	AgentEnvFile     string
 	DockerSocket     string
 	DashboardEnabled bool
 }
@@ -28,6 +29,7 @@ func Load() Config {
 		NodeID:           os.Getenv("BLACKARK_NODE_ID"),
 		NodeToken:        os.Getenv("BLACKARK_NODE_TOKEN"),
 		JoinToken:        os.Getenv("BLACKARK_JOIN_TOKEN"),
+		AgentEnvFile:     os.Getenv("BLACKARK_AGENT_ENV_FILE"),
 		DockerSocket:     value("BLACKARK_DOCKER_SOCKET", "/var/run/docker.sock"),
 		DashboardEnabled: os.Getenv("BLACKARK_DASHBOARD_ENABLED") == "true",
 	}

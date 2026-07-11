@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -48,7 +49,15 @@ func main() {
 	a := &agent{cfg: cfg, api: &http.Client{Timeout: 15 * time.Second}, docker: dockerClient(cfg.DockerSocket), instances: map[string]reported{}}
 	if cfg.NodeID == "" || cfg.NodeToken == "" {
 		if cfg.JoinToken == "" {
-			log.Fatal("BLACKARK_NODE_ID/BLACKARK_NODE_TOKEN or BLACKARK_JOIN_TOKEN is required")
+			if cfg.APIToken == "" {
+				log.Fatal("BLACKARK_NODE_ID/BLACKARK_NODE_TOKEN, BLACKARK_JOIN_TOKEN, or BLACKARK_API_TOKEN is required")
+			}
+			t, err := a.createJoinToken()
+			if err != nil {
+				log.Fatal(err)
+			}
+			cfg.JoinToken = t
+			a.cfg = cfg
 		}
 		id, t, err := a.join()
 		if err != nil {
@@ -56,8 +65,17 @@ func main() {
 		}
 		cfg.NodeID = id
 		cfg.NodeToken = t
+		cfg.JoinToken = ""
+		cfg.APIToken = ""
 		a.cfg = cfg
-		log.Printf("joined as %s; persist BLACKARK_NODE_ID=%s and BLACKARK_NODE_TOKEN securely", cfg.NodeName, id)
+		if cfg.AgentEnvFile != "" {
+			if err := persistAgentEnv(cfg.AgentEnvFile, cfg); err != nil {
+				log.Fatalf("persist joined credentials: %v", err)
+			}
+			log.Printf("joined as %s; persisted BLACKARK_NODE_ID=%s credentials to %s", cfg.NodeName, id, cfg.AgentEnvFile)
+		} else {
+			log.Printf("joined as %s; persist BLACKARK_NODE_ID=%s and BLACKARK_NODE_TOKEN securely", cfg.NodeName, id)
+		}
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -111,6 +129,56 @@ func (a *agent) join() (string, string, error) {
 	var out struct{ ID, Credential string }
 	err := a.request(context.Background(), "POST", "/v1/nodes/join", "", map[string]string{"name": a.cfg.NodeName, "token": a.cfg.JoinToken}, &out)
 	return out.ID, out.Credential, err
+}
+func (a *agent) createJoinToken() (string, error) {
+	var out struct{ Token string }
+	err := a.request(context.Background(), "POST", "/v1/join-tokens", a.cfg.APIToken, map[string]int{"ttl_seconds": 600}, &out)
+	return out.Token, err
+}
+func persistAgentEnv(path string, cfg config.Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".agent.env.")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	write := func(key, value string) error {
+		_, err := fmt.Fprintf(tmp, "%s=%s\n", key, quoteEnv(value))
+		return err
+	}
+	for _, kv := range []struct{ key, value string }{
+		{"BLACKARK_CONTROL_URL", cfg.ControlURL},
+		{"BLACKARK_NODE_NAME", cfg.NodeName},
+		{"BLACKARK_DOCKER_SOCKET", cfg.DockerSocket},
+		{"BLACKARK_NODE_ID", cfg.NodeID},
+		{"BLACKARK_NODE_TOKEN", cfg.NodeToken},
+		{"BLACKARK_AGENT_ENV_FILE", path},
+	} {
+		if err := write(kv.key, kv.value); err != nil {
+			tmp.Close()
+			return err
+		}
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+func quoteEnv(value string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"\"", "\\\"",
+		"$", "\\$",
+		"`", "\\`",
+	)
+	return "\"" + replacer.Replace(value) + "\""
 }
 func (a *agent) tick(ctx context.Context) error {
 	a.refresh(ctx)
