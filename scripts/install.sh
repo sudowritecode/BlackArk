@@ -138,14 +138,37 @@ EOF
 }
 
 require_agent_env() {
+	if [ "$ROLE" = "single-node" ] && [ "${BLACKARK_CONTROL_URL:-}" = "" ]; then
+		BLACKARK_CONTROL_URL="http://127.0.0.1:8080"
+		export BLACKARK_CONTROL_URL
+	fi
 	if [ "${BLACKARK_CONTROL_URL:-}" = "" ]; then
 		echo "blackark install: set BLACKARK_CONTROL_URL for ROLE=agent or ROLE=single-node" >&2
 		exit 1
 	fi
 	if [ "${BLACKARK_NODE_ID:-}" = "" ] || [ "${BLACKARK_NODE_TOKEN:-}" = "" ]; then
 		if [ "${BLACKARK_JOIN_TOKEN:-}" = "" ]; then
-			echo "blackark install: set BLACKARK_JOIN_TOKEN, or BLACKARK_NODE_ID plus BLACKARK_NODE_TOKEN, for ROLE=agent or ROLE=single-node" >&2
-			exit 1
+			if [ "${BLACKARK_API_TOKEN:-}" = "" ]; then
+				echo "blackark install: set BLACKARK_JOIN_TOKEN, BLACKARK_API_TOKEN, or BLACKARK_NODE_ID plus BLACKARK_NODE_TOKEN, for ROLE=agent or ROLE=single-node" >&2
+				exit 1
+			fi
+		fi
+	fi
+}
+
+env_line() {
+	key="$1"
+	value="$2"
+	escaped=$(printf "%s" "$value" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')
+	printf '%s="%s"\n' "$key" "$escaped"
+}
+
+agent_bootstrap_note() {
+	if [ "${BLACKARK_NODE_ID:-}" = "" ] || [ "${BLACKARK_NODE_TOKEN:-}" = "" ]; then
+		if [ "${BLACKARK_JOIN_TOKEN:-}" != "" ]; then
+			echo "blackark install: agent will join on first start and persist node credentials to $ENV_DIR/agent.env"
+		elif [ "${BLACKARK_API_TOKEN:-}" != "" ]; then
+			echo "blackark install: agent will bootstrap a join token on first start and persist node credentials to $ENV_DIR/agent.env"
 		fi
 	fi
 }
@@ -155,14 +178,17 @@ write_agent_service() {
 	as_root install -d -m 0750 "$ENV_DIR"
 	tmp_env="$tmp/agent.env"
 	{
-		printf 'BLACKARK_CONTROL_URL=%s\n' "$BLACKARK_CONTROL_URL"
-		printf 'BLACKARK_NODE_NAME=%s\n' "${BLACKARK_NODE_NAME:-$(hostname)}"
-		printf 'BLACKARK_DOCKER_SOCKET=%s\n' "${BLACKARK_DOCKER_SOCKET:-/var/run/docker.sock}"
-		[ "${BLACKARK_JOIN_TOKEN:-}" = "" ] || printf 'BLACKARK_JOIN_TOKEN=%s\n' "$BLACKARK_JOIN_TOKEN"
-		[ "${BLACKARK_NODE_ID:-}" = "" ] || printf 'BLACKARK_NODE_ID=%s\n' "$BLACKARK_NODE_ID"
-		[ "${BLACKARK_NODE_TOKEN:-}" = "" ] || printf 'BLACKARK_NODE_TOKEN=%s\n' "$BLACKARK_NODE_TOKEN"
+		env_line BLACKARK_CONTROL_URL "$BLACKARK_CONTROL_URL"
+		env_line BLACKARK_NODE_NAME "${BLACKARK_NODE_NAME:-$(hostname)}"
+		env_line BLACKARK_DOCKER_SOCKET "${BLACKARK_DOCKER_SOCKET:-/var/run/docker.sock}"
+		env_line BLACKARK_AGENT_ENV_FILE "$ENV_DIR/agent.env"
+		[ "${BLACKARK_JOIN_TOKEN:-}" = "" ] || env_line BLACKARK_JOIN_TOKEN "$BLACKARK_JOIN_TOKEN"
+		[ "${BLACKARK_API_TOKEN:-}" = "" ] || env_line BLACKARK_API_TOKEN "$BLACKARK_API_TOKEN"
+		[ "${BLACKARK_NODE_ID:-}" = "" ] || env_line BLACKARK_NODE_ID "$BLACKARK_NODE_ID"
+		[ "${BLACKARK_NODE_TOKEN:-}" = "" ] || env_line BLACKARK_NODE_TOKEN "$BLACKARK_NODE_TOKEN"
 	} > "$tmp_env"
 	as_root install -m 0600 -o root -g root "$tmp_env" "$ENV_DIR/agent.env"
+	agent_bootstrap_note
 
 	tmp_unit="$tmp/blackark-agent.service"
 	cat > "$tmp_unit" <<EOF

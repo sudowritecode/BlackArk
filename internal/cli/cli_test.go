@@ -23,69 +23,87 @@ func testServer(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`{"service":"blackark-control","status":"ok"}`))
 	})
 	mux.HandleFunc("GET /v1/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`[{"id":"n1","name":"node-1","status":"healthy"}]`))
 	})
 	mux.HandleFunc("GET /v1/apps", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`[{"id":"a1","name":"my-app","image":"nginx:1.27","replicas":2}]`))
 	})
 	mux.HandleFunc("GET /v1/apps/a1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`{"id":"a1","name":"my-app","image":"nginx:1.27","replicas":2,"instances":[{"id":"d1","status":"running"}]}`))
 	})
 	mux.HandleFunc("GET /v1/apps/a1/logs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte("line1\nline2\nline3\n"))
 	})
 	mux.HandleFunc("PATCH /v1/apps/a1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`{"id":"a1","name":"my-app","replicas":5}`))
 	})
 	mux.HandleFunc("POST /v1/apps/a1/restart", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(202)
 		w.Write([]byte(`{"id":"a1","status":"restarting"}`))
 	})
 	mux.HandleFunc("DELETE /v1/apps/a1", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /v1/apps", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(201)
 		w.Write([]byte(`{"id":"a2","name":"new-app","image":"redis:7","replicas":1}`))
 	})
+	mux.HandleFunc("POST /v1/join-tokens", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+authToken {
+			w.WriteHeader(401)
+			return
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{"token":"test-join-token-abc","expires_at":"2026-07-11T12:30:00Z"}`))
+	})
 	mux.HandleFunc("GET /api/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+authToken {
-			w.WriteHeader(401); return
+			w.WriteHeader(401)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write([]byte(`{
@@ -660,5 +678,64 @@ func TestApplyUpdatesViaPatch(t *testing.T) {
 	}
 	if method != "PATCH" {
 		t.Fatalf("expected PATCH for existing app, got %s", method)
+	}
+}
+
+func TestRunJoinToken(t *testing.T) {
+	srv := testServer(t)
+	defer srv.Close()
+	writeConfig(t, srv.URL)
+	out := new(bytes.Buffer)
+	err := Run([]string{"join-token"}, nil, out, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"Token:", "test-join-token-abc", "TTL:", "600s", "Expires:", "docker run", "BLACKARK_JOIN_TOKEN=test-join-token-abc", srv.URL} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunJoinTokenCustomTTL(t *testing.T) {
+	srv := testServer(t)
+	defer srv.Close()
+	writeConfig(t, srv.URL)
+	out := new(bytes.Buffer)
+	err := Run([]string{"join-token", "--ttl", "120"}, nil, out, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "120s") {
+		t.Fatalf("expected custom TTL in output:\n%s", got)
+	}
+}
+
+func TestRunJoinTokenJSON(t *testing.T) {
+	srv := testServer(t)
+	defer srv.Close()
+	writeConfig(t, srv.URL)
+	out := new(bytes.Buffer)
+	err := Run([]string{"join-token", "-o", "json"}, nil, out, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("expected JSON output: %v", err)
+	}
+	if resp["token"] != "test-join-token-abc" {
+		t.Fatalf("unexpected token: %v", resp["token"])
+	}
+}
+
+func TestRunJoinTokenNotLoggedIn(t *testing.T) {
+	os.Setenv("BLACKARK_CONFIG", "/nonexistent/blackark/config.yaml")
+	t.Cleanup(func() { os.Unsetenv("BLACKARK_CONFIG") })
+	err := Run([]string{"join-token"}, nil, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected error when not logged in")
 	}
 }
